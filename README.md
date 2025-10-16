@@ -1,4 +1,5 @@
 # X Media Downloader
+<img width="1366" height="666" alt="image" src="https://github.com/user-attachments/assets/f7cc12b3-f7bd-499d-859c-92257f61efc8" />
 
 X (旧Twitter) からメディアをダウンロードするためのツールです。
 
