@@ -178,9 +178,12 @@ def list_user_tweets(username):
             if images: tweets.append({"tweet_id": tweet_id, "images": images})
     return jsonify({"tweets": tweets})
 
-@app.route('/api/images/random')
-def random_images():
-    """Return 50 random images from all images on the server"""
+@app.route('/api/images')
+def get_images():
+    """Return images from the server. Supports random and latest sorting."""
+    sort_mode = request.args.get('sort', 'latest')
+    limit = int(request.args.get('limit', 50))
+
     all_images = []
     if not os.path.exists(UPLOAD_FOLDER):
         return jsonify({"images": []})
@@ -188,13 +191,26 @@ def random_images():
     for root, _, files in os.walk(UPLOAD_FOLDER):
         for file in files:
             if file.lower().endswith(('.jpg', '.jpeg', '.png', '.webp', '.gif')):
-                relative_path = os.path.relpath(os.path.join(root, file), UPLOAD_FOLDER).replace("\\", "/")
-                all_images.append({"path": relative_path})
-
-    sample_size = min(len(all_images), 50)
-    random_sample = random.sample(all_images, sample_size)
+                filepath = os.path.join(root, file)
+                relative_path = os.path.relpath(filepath, UPLOAD_FOLDER).replace("\\", "/")
+                try:
+                    mtime = os.path.getmtime(filepath)
+                    all_images.append({"path": relative_path, "mtime": mtime})
+                except OSError:
+                    continue
     
-    return jsonify({"images": random_sample})
+    if sort_mode == 'random':
+        sample_size = min(len(all_images), limit)
+        images_to_return = random.sample(all_images, sample_size)
+    else: # Default to 'latest'
+        all_images.sort(key=lambda x: x.get('mtime', 0), reverse=True)
+        images_to_return = all_images[:limit]
+
+    # The 'mtime' key is not needed by the frontend, so we can remove it.
+    for image in images_to_return:
+        image.pop('mtime', None)
+
+    return jsonify({"images": images_to_return})
 
 @app.route('/images/<path:filename>')
 def serve_image(filename):
