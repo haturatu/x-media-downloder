@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="ja">
 <head>
@@ -30,30 +31,15 @@
         padding: 1rem;
     }
     .sidebar h2 { 
-        margin: 0 0 1rem 0; 
+        margin: 1.5rem 0 1rem 0; 
         font-size: 1.2rem; 
         color: var(--primary-color); 
     }
-    .download-section {
-        margin-bottom: 1rem;
-    }
-    .download-section textarea { 
-        width: 100%;
-        box-sizing: border-box;
-        background-color: var(--bg-color); 
-        border: 1px solid var(--border-color); 
-        color: var(--text-color); 
-        border-radius: 8px; 
-        padding: 0.75rem; 
-        resize: vertical; 
-        min-height: 48px;
-        font-size: 1rem;
-        margin-bottom: 0.5rem;
-    }
-    .download-section button { 
+    .sidebar h2:first-child { margin-top: 0; }
+
+    .download-section button, .autotag-section button { 
         width: 100%;
         padding: 0.75rem 1.5rem; 
-        background-color: var(--primary-color); 
         border: none; 
         color: white; 
         font-weight: bold; 
@@ -62,266 +48,84 @@
         transition: background-color 0.2s;
         font-size: 1rem;
     }
+    .download-section button { background-color: var(--primary-color); }
     .download-section button:hover { background-color: #0056b3; }
     .download-section button:disabled { background-color: #555; cursor: not-allowed; }
+    .autotag-section button { background-color: #444; }
+    .autotag-section button:hover { background-color: #555; }
+
+    .download-section textarea { 
+        width: 100%; box-sizing: border-box; background-color: var(--bg-color); 
+        border: 1px solid var(--border-color); color: var(--text-color); 
+        border-radius: 8px; padding: 0.75rem; resize: vertical; 
+        min-height: 48px; font-size: 1rem; margin-bottom: 0.5rem;
+    }
 
     .search-box { 
-        width: 100%; 
-        padding: 0.75rem; 
-        background-color: var(--bg-color); 
-        border: 1px solid var(--border-color); 
-        border-radius: 8px; 
-        color: var(--text-color); 
-        margin-bottom: 1rem; 
-        box-sizing: border-box;
-        font-size: 1rem;
+        width: 100%; padding: 0.75rem; background-color: var(--bg-color); 
+        border: 1px solid var(--border-color); border-radius: 8px; 
+        color: var(--text-color); margin-bottom: 1rem; box-sizing: border-box; font-size: 1rem;
     }
-    .nav-list {
-        list-style: none;
-        padding: 0;
-        margin: 0;
-        overflow-y: auto;
-        flex-grow: 1;
-    }
-    .nav-list li { /* This will be the .user-item */
-        margin-bottom: 0.25rem;
-    }
-    .nav-list li.home-link {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        padding: 0.75rem;
-        cursor: pointer;
-        border-radius: 8px;
-        transition: background-color 0.2s;
-    }
-    .nav-list li.home-link:hover { background-color: rgba(255, 255, 255, 0.08); }
-    .nav-list li.home-link.active { background-color: rgba(0, 123, 255, 0.2); font-weight: bold; }
 
-    .nav-list .tweet-count { color: var(--text-secondary-color); font-size: 0.9rem; }
+    .nav-container { flex-grow: 1; overflow-y: auto; }
+    .nav-list, .tag-list { list-style: none; padding: 0; margin: 0; }
+    .nav-list li, .tag-list li { margin-bottom: 0.25rem; }
 
-    /* --- Accordion Nav --- */
+    .nav-list li.home-link, .tag-list .tag-item {
+        display: flex; justify-content: space-between; align-items: center;
+        padding: 0.75rem; cursor: pointer; border-radius: 8px; transition: background-color 0.2s;
+    }
+    .nav-list li.home-link:hover, .tag-list .tag-item:hover { background-color: rgba(255, 255, 255, 0.08); }
+    .nav-list li.home-link.active, .tag-list .tag-item.active { background-color: rgba(0, 123, 255, 0.2); font-weight: bold; }
+
+    .item-count { color: var(--text-secondary-color); font-size: 0.9rem; }
+
     .nav-list .user-header {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        cursor: pointer;
-        padding: 0.75rem;
-        border-radius: 8px;
-        transition: background-color 0.2s;
+        display: flex; justify-content: space-between; align-items: center;
+        cursor: pointer; padding: 0.75rem; border-radius: 8px; transition: background-color 0.2s;
     }
-    .nav-list .user-header:hover {
-        background-color: rgba(255, 255, 255, 0.08);
-    }
-    .nav-list .user-item.active > .user-header {
-        font-weight: bold;
-        color: var(--primary-color);
-    }
-    .nav-list .tweet-list {
-        list-style: none;
-        padding: 0 0 0 1.5rem;
-        margin: 0;
-        max-height: 0;
-        overflow: hidden;
-        transition: max-height 0.3s ease-out;
-    }
-    .nav-list .user-item.open > .tweet-list {
-        max-height: 500px; /* Adjust as needed */
-        overflow-y: auto;
-    }
-    .nav-list .tweet-list li {
-        padding: 0.5rem 0.75rem;
-        cursor: pointer;
-        border-radius: 6px;
-        color: var(--text-secondary-color);
-        transition: background-color 0.2s, color 0.2s;
-        font-size: 0.9rem;
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-    }
-    .nav-list .tweet-list li:hover {
-        background-color: rgba(255, 255, 255, 0.05);
-        color: var(--text-color);
-    }
-    .nav-list .tweet-list li.active {
-        color: var(--primary-color);
-        font-weight: 600;
-    }
+    .nav-list .user-header:hover { background-color: rgba(255, 255, 255, 0.08); }
+    .nav-list .user-item.active > .user-header { font-weight: bold; color: var(--primary-color); }
+    .nav-list .tweet-list { list-style: none; padding: 0 0 0 1.5rem; margin: 0; max-height: 0; overflow: hidden; transition: max-height 0.3s ease-out; }
+    .nav-list .user-item.open > .tweet-list { max-height: 500px; overflow-y: auto; }
+    .nav-list .tweet-list li { padding: 0.5rem 0.75rem; cursor: pointer; border-radius: 6px; color: var(--text-secondary-color); transition: background-color 0.2s, color 0.2s; font-size: 0.9rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .nav-list .tweet-list li:hover { background-color: rgba(255, 255, 255, 0.05); color: var(--text-color); }
+    .nav-list .tweet-list li.active { color: var(--primary-color); font-weight: 600; }
 
     /* --- Main Content --- */
-    .main-content { 
-        flex-grow: 1; 
-        display: flex; 
-        flex-direction: column; 
-        overflow-y: hidden; 
-        min-width: 0;
-    }
-    .header { 
-        padding: 1rem; 
-        background-color: var(--surface-color); 
-        border-bottom: 1px solid var(--border-color); 
-        display: flex; 
-        justify-content: space-between;
-        align-items: center;
-        gap: 1rem; 
-    }
-    .header h1 {
-        margin: 0;
-        font-size: 1.5rem;
-    }
-    .header .search-form {
-        display: flex;
-        gap: 0.5rem;
-    }
-    .header .search-form input {
-        background-color: var(--bg-color);
-        border: 1px solid var(--border-color);
-        color: var(--text-color);
-        border-radius: 8px;
-        padding: 0.5rem 0.75rem;
-        font-size: 1rem;
-    }
+    .main-content { flex-grow: 1; display: flex; flex-direction: column; overflow-y: hidden; min-width: 0; }
+    .header { padding: 1rem; background-color: var(--surface-color); border-bottom: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center; gap: 1rem; }
+    .header h1 { margin: 0; font-size: 1.5rem; }
+    .header .tag-search-form { display: flex; gap: 0.5rem; }
+    .header .tag-search-form input { background-color: var(--bg-color); border: 1px solid var(--border-color); color: var(--text-color); border-radius: 8px; padding: 0.5rem 0.75rem; font-size: 1rem; }
     
-    #status { 
-        padding: 0.5rem 1rem; 
-        font-size: 0.9rem; 
-        color: var(--text-secondary-color); 
-        background-color: var(--bg-color);
-        border-bottom: 1px solid var(--border-color);
-    }
+    #status { padding: 0.5rem 1rem; font-size: 0.9rem; color: var(--text-secondary-color); background-color: var(--bg-color); border-bottom: 1px solid var(--border-color); }
+    .gallery-wrapper { flex-grow: 1; overflow-y: auto; padding: 1rem; }
+    .gallery-title { margin: 0 0 1rem; padding-bottom: 0.5rem; border-bottom: 1px solid var(--border-color); font-size: 1.1rem; }
 
-    .gallery-wrapper { 
-        flex-grow: 1; 
-        overflow-y: auto; 
-        padding: 1rem; 
-    }
-    .gallery-title { 
-        margin: 0 0 1rem; 
-        padding-bottom: 0.5rem; 
-        border-bottom: 1px solid var(--border-color); 
-        font-size: 1.1rem;
-    }
+    .image-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; }
+    .img-container { position: relative; cursor: pointer; overflow: hidden; border-radius: 8px; background-color: var(--surface-color); transition: transform 0.2s ease, box-shadow 0.2s ease; aspect-ratio: 1 / 1; }
+    .img-container:hover { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(0,0,0,0.3); }
+    .image-grid img { width: 100%; height: 100%; display: block; object-fit: cover; }
+    .img-container .tags-overlay { position: absolute; bottom: 0; left: 0; right: 0; background: rgba(0,0,0,0.7); color: white; font-size: 0.75rem; padding: 4px 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; opacity: 0; transition: opacity 0.2s; }
+    .img-container:hover .tags-overlay { opacity: 1; }
 
-    .image-grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
-        gap: 12px;
-    }
-    .img-container {
-        cursor: pointer;
-        overflow: hidden;
-        border-radius: 8px;
-        background-color: var(--surface-color);
-        transition: transform 0.2s ease, box-shadow 0.2s ease;
-        aspect-ratio: 1 / 1;
-    }
-    .img-container:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 4px 12px rgba(0,0,0,0.3);
-    }
-    .image-grid img {
-        width: 100%;
-        height: 100%;
-        display: block;
-        object-fit: cover;
-    }
-
-    .placeholder { 
-        text-align: center; 
-        color: var(--text-secondary-color); 
-        margin-top: 3rem; 
-        padding: 2rem;
-        font-size: 1rem;
-    }
-    .loader { 
-        margin: 3rem auto; 
-        width: 48px; 
-        height: 48px; 
-        border: 4px solid var(--border-color); 
-        border-top-color: var(--primary-color); 
-        border-radius: 50%; 
-        animation: spin 1s linear infinite; 
-    }
+    .placeholder { text-align: center; color: var(--text-secondary-color); margin-top: 3rem; padding: 2rem; font-size: 1rem; }
+    .loader { margin: 3rem auto; width: 48px; height: 48px; border: 4px solid var(--border-color); border-top-color: var(--primary-color); border-radius: 50%; animation: spin 1s linear infinite; }
     @keyframes spin { to { transform: rotate(360deg); } }
 
     /* --- Modal --- */
-    .modal-overlay { 
-        position: fixed; 
-        top: 0; 
-        left: 0; 
-        width: 100%; 
-        height: 100%; 
-        background: rgba(0, 0, 0, 0.95); 
-        display: flex; 
-        justify-content: center; 
-        align-items: center; 
-        z-index: 2000; 
-        opacity: 0; 
-        visibility: hidden; 
-        transition: opacity 0.3s, visibility 0.3s; 
-    }
+    .modal-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0, 0, 0, 0.95); display: flex; justify-content: center; align-items: center; z-index: 2000; opacity: 0; visibility: hidden; transition: opacity 0.3s, visibility 0.3s; }
     .modal-overlay.visible { opacity: 1; visibility: visible; }
-    .modal-content { 
-        position: relative; 
-        width: 100%; 
-        height: 100%; 
-        display: flex; 
-        justify-content: center; 
-        align-items: center; 
-        padding: 2rem;
-        box-sizing: border-box;
-    }
-    .modal-content img { 
-        max-width: 100%; 
-        max-height: 100%; 
-        object-fit: contain; 
-        cursor: pointer;
-        border-radius: 8px;
-    }
-    .modal-nav { 
-        position: absolute; 
-        top: 50%; 
-        transform: translateY(-50%); 
-        background-color: rgba(0,0,0,0.7); 
-        color: white; 
-        border: none; 
-        font-size: 1.5rem; 
-        width: 48px; 
-        height: 48px; 
-        border-radius: 50%; 
-        cursor: pointer; 
-        display: flex; 
-        justify-content: center; 
-        align-items: center; 
-        user-select: none; 
-        transition: background-color 0.2s, transform 0.2s; 
-    }
-    .modal-nav:hover { 
-        background-color: rgba(0,0,0,0.9); 
-        transform: translateY(-50%) scale(1.1);
-    }
+    .modal-content { position: relative; width: 100%; height: 100%; display: flex; flex-direction: column; justify-content: center; align-items: center; padding: 2rem; box-sizing: border-box; }
+    .modal-content img { max-width: 100%; max-height: 85%; object-fit: contain; cursor: pointer; border-radius: 8px; }
+    .modal-tags { color: #ccc; margin-top: 1rem; max-width: 80%; text-align: center; }
+    .modal-nav { position: absolute; top: 50%; transform: translateY(-50%); background-color: rgba(0,0,0,0.7); color: white; border: none; font-size: 1.5rem; width: 48px; height: 48px; border-radius: 50%; cursor: pointer; display: flex; justify-content: center; align-items: center; user-select: none; transition: background-color 0.2s, transform 0.2s; }
+    .modal-nav:hover { background-color: rgba(0,0,0,0.9); transform: translateY(-50%) scale(1.1); }
     .modal-nav.prev { left: 1rem; }
     .modal-nav.next { right: 1rem; }
-    .modal-close { 
-        position: absolute; 
-        top: 1rem; 
-        right: 1rem; 
-        color: white; 
-        font-size: 2rem; 
-        cursor: pointer; 
-        background-color: rgba(0,0,0,0.7);
-        width: 48px;
-        height: 48px;
-        border-radius: 50%;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        transition: background-color 0.2s;
-    }
-    .modal-close:hover {
-        background-color: rgba(0,0,0,0.9);
-    }
+    .modal-close { position: absolute; top: 1rem; right: 1rem; color: white; font-size: 2rem; cursor: pointer; background-color: rgba(0,0,0,0.7); width: 48px; height: 48px; border-radius: 50%; display: flex; align-items: center; justify-content: center; transition: background-color 0.2s; }
+    .modal-close:hover { background-color: rgba(0,0,0,0.9); }
 </style>
 </head>
 <body>
@@ -333,15 +137,28 @@
             <textarea id="tweetUrls" placeholder="Enter Tweet URLs..." rows="3"></textarea>
             <button id="downloadBtn">Download</button>
         </div>
-        
-        <h2>Users</h2>
-        <input type="search" id="userSearch" class="search-box" placeholder="Search users...">
-        <ul id="navList" class="nav-list"></ul>
+
+        <div class="nav-container">
+            <h2>Users</h2>
+            <input type="search" id="userSearch" class="search-box" placeholder="Search users...">
+            <ul id="navList" class="nav-list"></ul>
+
+            <h2>Tags</h2>
+            <input type="search" id="tagSearch" class="search-box" placeholder="Search tags...">
+            <ul id="tagList" class="tag-list"></ul>
+        </div>
+
+        <div class="autotag-section">
+            <button id="autotagReloadBtn">Autotagger Reload</button>
+        </div>
     </aside>
 
     <main class="main-content">
         <header class="header">
             <h1>X Gallery</h1>
+            <form id="tagSearchForm" class="tag-search-form">
+                <input type="search" id="tagSearchInput" placeholder="Search by tags (e.g. 1girl, blue_hair)">
+            </form>
         </header>
         <div id="status"></div>
         <div id="galleryWrapper" class="gallery-wrapper"></div>
@@ -353,6 +170,7 @@
         <span id="modalClose" class="modal-close">&times;</span>
         <button id="modalPrev" class="modal-nav prev">&#10094;</button>
         <img id="modalImg" src="">
+        <div id="modalTags" class="modal-tags"></div>
         <button id="modalNext" class="modal-nav next">&#10095;</button>
     </div>
 </div>
@@ -360,14 +178,20 @@
 <script>
     const G_ELEMENTS = {
         navList: document.getElementById('navList'),
+        tagList: document.getElementById('tagList'),
         userSearch: document.getElementById('userSearch'),
+        tagSearch: document.getElementById('tagSearch'),
+        tagSearchForm: document.getElementById('tagSearchForm'),
+        tagSearchInput: document.getElementById('tagSearchInput'),
         galleryWrapper: document.getElementById('galleryWrapper'),
         status: document.getElementById('status'),
         downloadBtn: document.getElementById('downloadBtn'),
+        autotagReloadBtn: document.getElementById('autotagReloadBtn'),
         tweetUrls: document.getElementById('tweetUrls'),
         modal: {
             overlay: document.getElementById('modalOverlay'),
             img: document.getElementById('modalImg'),
+            tags: document.getElementById('modalTags'),
             close: document.getElementById('modalClose'),
             prev: document.getElementById('modalPrev'),
             next: document.getElementById('modalNext'),
@@ -375,10 +199,13 @@
     };
 
     let G_STATE = {
-        activeUser: 'home',
+        activeView: 'home', // 'home', 'user', 'tag'
+        activeUser: null,
         activeTweet: null,
+        activeTags: [],
         gallery: [],
         galleryIndex: 0,
+        allTags: [],
     };
 
     document.addEventListener('DOMContentLoaded', () => {
@@ -389,14 +216,18 @@
 
     function initNav() {
         loadUsers();
+        loadAllTags();
     }
 
     function initEventListeners() {
         G_ELEMENTS.userSearch.addEventListener('input', () => loadUsers(G_ELEMENTS.userSearch.value));
+        G_ELEMENTS.tagSearch.addEventListener('input', () => renderTagList(G_ELEMENTS.tagSearch.value));
+        G_ELEMENTS.tagSearchForm.addEventListener('submit', handleTagSearch);
         G_ELEMENTS.downloadBtn.addEventListener('click', handleDownload);
+        G_ELEMENTS.autotagReloadBtn.addEventListener('click', handleAutotagReload);
         
         const { overlay, close, prev, next, img } = G_ELEMENTS.modal;
-        overlay.addEventListener('click', e => (e.target === overlay) && closeModal());
+        overlay.addEventListener('click', e => (e.target === overlay || e.target === G_ELEMENTS.modal.tags) && closeModal());
         close.addEventListener('click', closeModal);
         prev.addEventListener('click', () => changeModalImage(-1));
         next.addEventListener('click', () => changeModalImage(1));
@@ -414,9 +245,9 @@
         });
     }
 
-    async function fetchAPI(url) {
+    async function fetchAPI(url, options = {}) {
         try {
-            const response = await fetch(url);
+            const response = await fetch(url, options);
             if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
             return await response.json();
         } catch (error) {
@@ -427,7 +258,7 @@
     }
 
     async function loadLatestImages() {
-        setActiveNav('home');
+        setActiveNav({ view: 'home' });
         renderLoader();
         const data = await fetchAPI('/api/images?sort=latest&limit=100');
         if (data) {
@@ -440,16 +271,38 @@
         }
     }
 
+    async function loadImagesByTags(tags) {
+        const tagString = tags.join(',');
+        setActiveNav({ view: 'tag', tags });
+        renderLoader();
+        const data = await fetchAPI(`/api/images?tags=${encodeURIComponent(tagString)}&limit=500`);
+        if (data) {
+            const title = `Tagged with: ${tagString}`;
+            if (data.images.length === 0) {
+                renderPlaceholder(title, 'No images found with these tags.');
+                return;
+            }
+            renderImageGrid(title, data.images);
+        }
+    }
+
     async function loadUsers(query = '') {
         const data = await fetchAPI(`/api/users?q=${encodeURIComponent(query)}`);
         if (data) renderNavList(data.users);
+    }
+
+    async function loadAllTags(query = '') {
+        const data = await fetchAPI('/api/tags');
+        if (data) {
+            G_STATE.allTags = data.tags;
+            renderTagList();
+        }
     }
 
     async function toggleUserTweets(username, userItem) {
         const tweetList = userItem.querySelector('.tweet-list');
         const isAlreadyOpen = userItem.classList.contains('open');
 
-        // Close other open users
         document.querySelectorAll('#navList .user-item.open').forEach(item => {
             if (item !== userItem) item.classList.remove('open');
         });
@@ -458,7 +311,7 @@
             userItem.classList.remove('open');
         } else {
             userItem.classList.add('open');
-            setActiveNav(username);
+            setActiveNav({ view: 'user', user: username });
             if (!tweetList.hasChildNodes()) {
                 const data = await fetchAPI(`/api/users/${username}/tweets`);
                 if (data && data.tweets) {
@@ -478,7 +331,7 @@
     }
 
     function loadTweetImages(username, tweetId, images, tweetLi) {
-        setActiveNav(username, tweetId);
+        setActiveNav({ view: 'user', user: username, tweet: tweetId });
         renderImageGrid(`@${username} / ${tweetId}`, images);
     }
 
@@ -499,8 +352,8 @@
             const totalDownloaded = data.results.reduce((sum, r) => sum + (r.downloaded_count || 0), 0);
             G_ELEMENTS.status.textContent = `Completed! Downloaded ${totalDownloaded} new images.`;
             G_ELEMENTS.tweetUrls.value = '';
-            initNav(); // Reload users
-            if (G_STATE.activeUser === 'home') {
+            initNav();
+            if (G_STATE.activeView === 'home') {
                 loadLatestImages();
             }
         } catch (error) {
@@ -508,6 +361,32 @@
             console.error("Download error:", error);
         } finally {
             G_ELEMENTS.downloadBtn.disabled = false;
+        }
+    }
+
+    async function handleAutotagReload() {
+        if (!confirm('This will clear all existing tags and re-tag every image. This can take a long time. Are you sure?')) return;
+
+        G_ELEMENTS.autotagReloadBtn.disabled = true;
+        G_ELEMENTS.status.textContent = "Starting autotagger reload... Existing tags will be cleared.";
+
+        const data = await fetchAPI('/api/autotag/reload', { method: 'POST' });
+        if (data) {
+            G_ELEMENTS.status.textContent = data.message;
+        } else {
+            G_ELEMENTS.status.textContent = "Failed to start autotagger reload.";
+        }
+        G_ELEMENTS.autotagReloadBtn.disabled = false;
+    }
+
+    function handleTagSearch(event) {
+        event.preventDefault();
+        const query = G_ELEMENTS.tagSearchInput.value.trim();
+        if (query) {
+            const tags = query.split(',').map(t => t.trim()).filter(Boolean);
+            if (tags.length > 0) {
+                loadImagesByTags(tags);
+            }
         }
     }
 
@@ -524,23 +403,36 @@
             const userItem = document.createElement('li');
             userItem.classList.add('user-item');
             userItem.dataset.navId = user.username;
-
             const userHeader = document.createElement('div');
             userHeader.className = 'user-header';
-            userHeader.innerHTML = `<span>${user.username}</span><span class="tweet-count">${user.tweet_count}</span>`;
+            userHeader.innerHTML = `<span>${user.username}</span><span class="item-count">${user.tweet_count}</span>`;
             userHeader.onclick = () => toggleUserTweets(user.username, userItem);
-            
             const tweetList = document.createElement('ul');
             tweetList.className = 'tweet-list';
-
             userItem.appendChild(userHeader);
             userItem.appendChild(tweetList);
             G_ELEMENTS.navList.appendChild(userItem);
         });
-        setActiveNav(G_STATE.activeUser, G_STATE.activeTweet);
+        setActiveNav({ view: G_STATE.activeView, user: G_STATE.activeUser, tweet: G_STATE.activeTweet, tags: G_STATE.activeTags });
+    }
+
+    function renderTagList(query = '') {
+        G_ELEMENTS.tagList.innerHTML = '';
+        const filteredTags = G_STATE.allTags.filter(t => t.tag.includes(query.toLowerCase()));
+        
+        filteredTags.forEach(tagInfo => {
+            const tagItem = document.createElement('li');
+            tagItem.className = 'tag-item';
+            tagItem.dataset.tag = tagInfo.tag;
+            tagItem.innerHTML = `<span>${tagInfo.tag}</span><span class="item-count">${tagInfo.count}</span>`;
+            tagItem.onclick = () => loadImagesByTags([tagInfo.tag]);
+            G_ELEMENTS.tagList.appendChild(tagItem);
+        });
+        setActiveNav({ view: G_STATE.activeView, user: G_STATE.activeUser, tweet: G_STATE.activeTweet, tags: G_STATE.activeTags });
     }
     
     function renderImageGrid(title, images) {
+        G_STATE.gallery = images;
         G_ELEMENTS.galleryWrapper.innerHTML = '';
 
         if (title) {
@@ -553,16 +445,20 @@
         const grid = document.createElement('div');
         grid.className = 'image-grid';
 
-        const imagePaths = images.map(img => `/images/${img.path}`);
-
         images.forEach((img, index) => {
             const container = document.createElement('div');
             container.className = 'img-container';
             const imageEl = document.createElement('img');
             imageEl.src = `/images/${img.path}`;
             imageEl.loading = 'lazy';
-            imageEl.onclick = () => showModal(imagePaths, index);
+            imageEl.onclick = () => showModal(index);
+            
+            const tagsOverlay = document.createElement('div');
+            tagsOverlay.className = 'tags-overlay';
+            tagsOverlay.textContent = img.tags.slice(0, 5).map(t => t.tag).join(', ');
+
             container.appendChild(imageEl);
+            container.appendChild(tagsOverlay);
             grid.appendChild(container);
         });
         G_ELEMENTS.galleryWrapper.appendChild(grid);
@@ -579,31 +475,34 @@
         G_ELEMENTS.galleryWrapper.innerHTML = html;
     }
     
-    function setActiveNav(userId, tweetId = null) {
-        G_STATE.activeUser = userId;
-        G_STATE.activeTweet = tweetId;
+    function setActiveNav({ view, user = null, tweet = null, tags = [] }) {
+        G_STATE.activeView = view;
+        G_STATE.activeUser = user;
+        G_STATE.activeTweet = tweet;
+        G_STATE.activeTags = tags;
 
-        document.querySelectorAll('#navList li').forEach(li => {
-            const isUserItem = li.classList.contains('user-item');
-            const isHomeLink = li.classList.contains('home-link');
+        // Reset all active states
+        document.querySelectorAll('#navList .active, #tagList .active').forEach(el => el.classList.remove('active'));
 
-            if (isHomeLink) {
-                li.classList.toggle('active', li.dataset.navId === userId);
-            } else if (isUserItem) {
-                li.classList.toggle('active', li.dataset.navId === userId);
-                if (li.dataset.navId === userId && tweetId) {
-                    li.classList.add('open'); // Keep user open if a tweet is active
+        if (view === 'home') {
+            document.querySelector('#navList .home-link')?.classList.add('active');
+        } else if (view === 'user') {
+            const userItem = document.querySelector(`#navList .user-item[data-nav-id='${user}']`);
+            if (userItem) {
+                userItem.classList.add('active');
+                if (tweet) {
+                    userItem.classList.add('open');
+                    userItem.querySelector(`.tweet-list li[data-tweet-id='${tweet}']`)?.classList.add('active');
                 }
-                // Set active on tweet
-                li.querySelectorAll('.tweet-list li').forEach(tweetLi => {
-                    tweetLi.classList.toggle('active', tweetLi.dataset.tweetId === tweetId);
-                });
             }
-        });
+        } else if (view === 'tag') {
+            tags.forEach(tag => {
+                document.querySelector(`#tagList .tag-item[data-tag='${tag}']`)?.classList.add('active');
+            });
+        }
     }
 
-    function showModal(gallery, index) {
-        G_STATE.gallery = gallery;
+    function showModal(index) {
         G_STATE.galleryIndex = index;
         updateModalImage();
         G_ELEMENTS.modal.overlay.classList.add('visible');
@@ -615,7 +514,9 @@
 
     function updateModalImage() {
         if (G_STATE.gallery.length > 0) {
-            G_ELEMENTS.modal.img.src = G_STATE.gallery[G_STATE.galleryIndex];
+            const image = G_STATE.gallery[G_STATE.galleryIndex];
+            G_ELEMENTS.modal.img.src = `/images/${image.path}`;
+            G_ELEMENTS.modal.tags.textContent = image.tags.map(t => t.tag).join(', ');
         }
     }
 

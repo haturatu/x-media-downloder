@@ -9,27 +9,35 @@ from concurrent.futures import ThreadPoolExecutor
 import requests
 from flask import Flask, jsonify, render_template, request, send_from_directory
 from flask_cors import CORS
+from dotenv import load_dotenv
 
+import database
+
+# --- Configuration ---
+load_dotenv()
 app = Flask(__name__)
 CORS(app)
 
-# --- Configuration ---
 UPLOAD_FOLDER = 'downloaded_images'
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 executor = ThreadPoolExecutor(max_workers=5)
+
+AUTOTAGGER_ENABLED = os.getenv('AUTOTAGGER') == 'true'
+AUTOTAGGER_URL = os.getenv('AUTOTAGGER_URL')
 # ---------------------
+
+# --- Database Initialization ---
+with app.app_context():
+    database.init_db()
+# -----------------------------
 
 # Set to store existing image hashes
 existing_image_hashes = set()
 
-# Load existing image hashes on startup
 def load_existing_image_hashes():
     global existing_image_hashes
     existing_image_hashes.clear()
-    
-    if not os.path.exists(UPLOAD_FOLDER):
-        return
-    
+    if not os.path.exists(UPLOAD_FOLDER): return
     for root, _, files in os.walk(UPLOAD_FOLDER):
         for file in files:
             if file.lower().endswith(('.jpg', '.jpeg', '.png', '.webp', '.gif')):
@@ -41,7 +49,6 @@ def load_existing_image_hashes():
                 except Exception as e:
                     print(f"Error reading file {filepath}: {e}")
 
-# Load existing hashes on app startup
 load_existing_image_hashes()
 
 def extract_username_from_url(tweet_url):
@@ -62,17 +69,45 @@ def get_tweet_images_alternative(tweet_url):
         print(f"Failed to get images for {tweet_url}: {e}")
         return []
 
+def autotag_file(filepath, relative_path):
+    if not AUTOTAGGER_ENABLED or not AUTOTAGGER_URL:
+        return
+
+    try:
+        with open(filepath, 'rb') as f:
+            files = {'file': (os.path.basename(filepath), f)}
+            response = requests.post(AUTOTAGGER_URL, files=files, data={'format': 'json'}, timeout=60)
+            response.raise_for_status()
+            tag_data = response.json()
+
+            if isinstance(tag_data, list) and tag_data:
+                tags_to_add = []
+                # The response is a list with one dictionary
+                raw_tags = tag_data[0].get('tags', {})
+                for tag, confidence in raw_tags.items():
+                    # Add tags with confidence > 0.4
+                    if confidence > 0.4:
+                        tags_to_add.append({'tag': tag, 'confidence': confidence})
+                
+                if tags_to_add:
+                    database.add_tags_for_file(relative_path, tags_to_add)
+                    print(f"Tagged {relative_path} with {len(tags_to_add)} tags.")
+
+    except requests.RequestException as e:
+        print(f"Autotagging failed for {relative_path}: {e}")
+    except Exception as e:
+        print(f"An unexpected error occurred during autotagging for {relative_path}: {e}")
+
+
 def download_image_task(image_url, tweet_dir, index, tweet_id):
     try:
         headers = {'User-Agent': 'Mozilla/5.0'}
         response = requests.get(image_url, headers=headers, timeout=30)
         response.raise_for_status()
         
-        # Calculate image hash
         image_content = response.content
         image_hash = hashlib.md5(image_content).hexdigest()
         
-        # Check for duplicates
         if image_hash in existing_image_hashes:
             return {"status": "skipped", "reason": "Duplicate image"}
         
@@ -85,14 +120,17 @@ def download_image_task(image_url, tweet_dir, index, tweet_id):
         filename = f"{tweet_id}_{index:02d}{ext}"
         filepath = os.path.join(tweet_dir, filename)
         
-        # Save image
         with open(filepath, 'wb') as f:
             f.write(image_content)
         
         if os.path.getsize(filepath) > 0:
-            # Register hash
             existing_image_hashes.add(image_hash)
-            return {"status": "success", "path": os.path.relpath(filepath, UPLOAD_FOLDER).replace("\\", "/")}
+            relative_path = os.path.relpath(filepath, UPLOAD_FOLDER).replace("\\", "/")
+            
+            # Perform autotagging
+            autotag_file(filepath, relative_path)
+            
+            return {"status": "success", "path": relative_path}
         
         os.remove(filepath)
         return {"status": "failed", "reason": "Empty file"}
@@ -171,33 +209,51 @@ def list_user_tweets(username):
     for tweet_id in sorted(os.listdir(user_path), reverse=True):
         tweet_path = os.path.join(user_path, tweet_id)
         if os.path.isdir(tweet_path):
-            images = []
+            images_in_tweet = []
+            image_paths = []
             for img_file in sorted(os.listdir(tweet_path)):
                 if img_file.lower().endswith(('.jpg', '.jpeg', '.png', '.webp', '.gif')):
-                    images.append({"path": f"{username}/{tweet_id}/{img_file}"})
-            if images: tweets.append({"tweet_id": tweet_id, "images": images})
+                    relative_path = f"{username}/{tweet_id}/{img_file}"
+                    image_paths.append(relative_path)
+                    images_in_tweet.append({"path": relative_path, "tags": []}) # Placeholder for tags
+            
+            if images_in_tweet:
+                tags_map = database.get_tags_for_files(image_paths)
+                for img in images_in_tweet:
+                    img['tags'] = tags_map.get(img['path'], [])
+                tweets.append({"tweet_id": tweet_id, "images": images_in_tweet})
+
     return jsonify({"tweets": tweets})
 
 @app.route('/api/images')
 def get_images():
-    """Return images from the server. Supports random and latest sorting."""
     sort_mode = request.args.get('sort', 'latest')
-    limit = int(request.args.get('limit', 50))
+    limit = int(request.args.get('limit', 100))
+    search_tags_str = request.args.get('tags', '')
 
     all_images = []
-    if not os.path.exists(UPLOAD_FOLDER):
-        return jsonify({"images": []})
-
-    for root, _, files in os.walk(UPLOAD_FOLDER):
-        for file in files:
-            if file.lower().endswith(('.jpg', '.jpeg', '.png', '.webp', '.gif')):
-                filepath = os.path.join(root, file)
-                relative_path = os.path.relpath(filepath, UPLOAD_FOLDER).replace("\\", "/")
+    
+    if search_tags_str:
+        search_tags = [tag.strip() for tag in search_tags_str.split(',') if tag.strip()]
+        if search_tags:
+            image_paths = database.find_files_by_tags(search_tags)
+            for path in image_paths:
                 try:
-                    mtime = os.path.getmtime(filepath)
-                    all_images.append({"path": relative_path, "mtime": mtime})
-                except OSError:
-                    continue
+                    mtime = os.path.getmtime(os.path.join(UPLOAD_FOLDER, path))
+                    all_images.append({"path": path, "mtime": mtime})
+                except OSError: continue
+    else:
+        if not os.path.exists(UPLOAD_FOLDER):
+            return jsonify({"images": []})
+        for root, _, files in os.walk(UPLOAD_FOLDER):
+            for file in files:
+                if file.lower().endswith(('.jpg', '.jpeg', '.png', '.webp', '.gif')):
+                    filepath = os.path.join(root, file)
+                    relative_path = os.path.relpath(filepath, UPLOAD_FOLDER).replace("\\", "/")
+                    try:
+                        mtime = os.path.getmtime(filepath)
+                        all_images.append({"path": relative_path, "mtime": mtime})
+                    except OSError: continue
     
     if sort_mode == 'random':
         sample_size = min(len(all_images), limit)
@@ -206,15 +262,53 @@ def get_images():
         all_images.sort(key=lambda x: x.get('mtime', 0), reverse=True)
         images_to_return = all_images[:limit]
 
-    # The 'mtime' key is not needed by the frontend, so we can remove it.
+    # Get tags for the selected images
+    image_paths = [img['path'] for img in images_to_return]
+    tags_map = database.get_tags_for_files(image_paths)
+
     for image in images_to_return:
         image.pop('mtime', None)
+        image['tags'] = tags_map.get(image['path'], [])
 
     return jsonify({"images": images_to_return})
 
 @app.route('/images/<path:filename>')
 def serve_image(filename):
     return send_from_directory(UPLOAD_FOLDER, filename)
+
+@app.route('/api/tags')
+def get_all_tags_api():
+    tags = database.get_all_tags()
+    return jsonify({"tags": tags})
+
+def _autotag_all_task():
+    """The actual task of iterating and tagging all files."""
+    print("Starting background task: autotag all files.")
+    with app.app_context():
+        database.clear_all_tags()
+        image_files = []
+        for root, _, files in os.walk(UPLOAD_FOLDER):
+            for file in files:
+                if file.lower().endswith(('.jpg', '.jpeg', '.png', '.webp', '.gif')):
+                    filepath = os.path.join(root, file)
+                    relative_path = os.path.relpath(filepath, UPLOAD_FOLDER).replace("\\", "/")
+                    image_files.append((filepath, relative_path))
+        
+        for filepath, relative_path in image_files:
+            autotag_file(filepath, relative_path)
+            
+    print("Finished background task: autotag all files.")
+
+@app.route('/api/autotag/reload', methods=['POST'])
+def autotag_reload_api():
+    if not AUTOTAGGER_ENABLED or not AUTOTAGGER_URL:
+        return jsonify({"success": False, "message": "Autotagger is not configured."}), 400
+    
+    # Run the tagging process in a background thread
+    executor.submit(_autotag_all_task)
+    
+    return jsonify({"success": True, "message": "Autotagging process started in the background. All existing tags have been cleared."})
+
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=8888)

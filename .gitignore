@@ -1,2 +1,4 @@
 downloaded_images
 *.log
+.env
+*.db
