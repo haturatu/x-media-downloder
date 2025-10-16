@@ -6,9 +6,9 @@
 <title>X Image Downloader Pro</title>
 <style>
     :root {
-        --bg-color: #1a1a1a;
-        --surface-color: #242424;
-        --primary-color: #1da1f2;
+        --bg-color: #000;
+        --surface-color: #1a1a1a;
+        --primary-color: #007bff;
         --text-color: #e0e0e0;
         --text-secondary-color: #888;
         --border-color: #333;
@@ -20,38 +20,7 @@
     }
     .container { display: flex; min-height: 100vh; }
     
-    /* --- モバイルメニュートグル --- */
-    .mobile-menu-toggle {
-        display: none;
-        position: fixed;
-        top: 1rem;
-        left: 1rem;
-        z-index: 1001;
-        background-color: var(--primary-color);
-        color: white;
-        border: none;
-        border-radius: 50%;
-        width: 48px;
-        height: 48px;
-        font-size: 1.2rem;
-        cursor: pointer;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.3);
-        transition: all 0.3s ease;
-    }
-    .mobile-menu-toggle:hover {
-        transform: scale(1.1);
-        box-shadow: 0 4px 12px rgba(0,0,0,0.4);
-    }
-    .mobile-overlay {
-    /* 既存のスタイルに追加 */
-    pointer-events: none;
-}
-
-    .mobile-overlay.visible {
-    pointer-events: auto;
-}
-    
-    /* --- サイドバー --- */
+    /* --- Sidebar --- */
     .sidebar {
         width: 280px; 
         background-color: var(--surface-color); 
@@ -59,36 +28,43 @@
         display: flex; 
         flex-direction: column; 
         padding: 1rem;
-        transition: transform 0.3s ease;
     }
     .sidebar h2 { 
         margin: 0 0 1rem 0; 
         font-size: 1.2rem; 
         color: var(--primary-color); 
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
     }
-    .sidebar-close {
-        display: none;
-        background: none;
-        border: none;
-        color: var(--text-color);
-        font-size: 1.5rem;
-        cursor: pointer;
-        padding: 0;
-        width: 32px;
-        height: 32px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        border-radius: 4px;
+    .download-section {
+        margin-bottom: 1rem;
+    }
+    .download-section textarea { 
+        width: 100%;
+        box-sizing: border-box;
+        background-color: var(--bg-color); 
+        border: 1px solid var(--border-color); 
+        color: var(--text-color); 
+        border-radius: 8px; 
+        padding: 0.75rem; 
+        resize: vertical; 
+        min-height: 48px;
+        font-size: 1rem;
+        margin-bottom: 0.5rem;
+    }
+    .download-section button { 
+        width: 100%;
+        padding: 0.75rem 1.5rem; 
+        background-color: var(--primary-color); 
+        border: none; 
+        color: white; 
+        font-weight: bold; 
+        border-radius: 8px; 
+        cursor: pointer; 
         transition: background-color 0.2s;
+        font-size: 1rem;
     }
-    .sidebar-close:hover {
-        background-color: rgba(255,255,255,0.1);
-    }
-    
+    .download-section button:hover { background-color: #0056b3; }
+    .download-section button:disabled { background-color: #555; cursor: not-allowed; }
+
     .search-box { 
         width: 100%; 
         padding: 0.75rem; 
@@ -118,10 +94,10 @@
         margin-bottom: 0.25rem;
     }
     .nav-list li:hover { background-color: rgba(255, 255, 255, 0.08); }
-    .nav-list li.active { background-color: rgba(29, 161, 242, 0.2); font-weight: bold; }
+    .nav-list li.active { background-color: rgba(0, 123, 255, 0.2); font-weight: bold; }
     .nav-list .tweet-count { color: var(--text-secondary-color); font-size: 0.9rem; }
 
-    /* --- メインコンテンツ --- */
+    /* --- Main Content --- */
     .main-content { 
         flex-grow: 1; 
         display: flex; 
@@ -134,41 +110,30 @@
         background-color: var(--surface-color); 
         border-bottom: 1px solid var(--border-color); 
         display: flex; 
+        justify-content: space-between;
+        align-items: center;
         gap: 1rem; 
-        flex-wrap: wrap;
     }
-    .header textarea { 
-        flex: 1; 
-        min-width: 200px;
-        background-color: var(--bg-color); 
-        border: 1px solid var(--border-color); 
-        color: var(--text-color); 
-        border-radius: 8px; 
-        padding: 0.75rem; 
-        resize: vertical; 
-        min-height: 48px;
+    .header h1 {
+        margin: 0;
+        font-size: 1.5rem;
+    }
+    .header .search-form {
+        display: flex;
+        gap: 0.5rem;
+    }
+    .header .search-form input {
+        background-color: var(--bg-color);
+        border: 1px solid var(--border-color);
+        color: var(--text-color);
+        border-radius: 8px;
+        padding: 0.5rem 0.75rem;
         font-size: 1rem;
     }
-    .header button { 
-        padding: 0.75rem 1.5rem; 
-        background-color: var(--primary-color); 
-        border: none; 
-        color: white; 
-        font-weight: bold; 
-        border-radius: 8px; 
-        cursor: pointer; 
-        transition: background-color 0.2s;
-        font-size: 1rem;
-        min-height: 48px;
-        white-space: nowrap;
-    }
-    .header button:hover { background-color: #1a91da; }
-    .header button:disabled { background-color: #555; cursor: not-allowed; }
     
     #status { 
-        padding: 0.75rem 1rem; 
+        padding: 0.5rem 1rem; 
         font-size: 0.9rem; 
-        min-height: 1.5rem; 
         color: var(--text-secondary-color); 
         background-color: var(--bg-color);
         border-bottom: 1px solid var(--border-color);
@@ -186,19 +151,18 @@
         font-size: 1.1rem;
     }
 
-    /* ✨ Masonry Layout for Image Grid ✨ */
     .image-grid {
-        column-count: 4;
-        column-gap: 12px;
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+        gap: 12px;
     }
     .img-container {
-        break-inside: avoid;
-        margin-bottom: 12px;
         cursor: pointer;
         overflow: hidden;
         border-radius: 8px;
         background-color: var(--surface-color);
         transition: transform 0.2s ease, box-shadow 0.2s ease;
+        aspect-ratio: 1 / 1;
     }
     .img-container:hover {
         transform: translateY(-2px);
@@ -206,12 +170,11 @@
     }
     .image-grid img {
         width: 100%;
-        height: auto;
+        height: 100%;
         display: block;
         object-fit: cover;
     }
 
-    /* ローディングとプレースホルダー */
     .placeholder { 
         text-align: center; 
         color: var(--text-secondary-color); 
@@ -230,7 +193,7 @@
     }
     @keyframes spin { to { transform: rotate(360deg); } }
 
-    /* --- モーダル --- */
+    /* --- Modal --- */
     .modal-overlay { 
         position: fixed; 
         top: 0; 
@@ -307,124 +270,30 @@
     .modal-close:hover {
         background-color: rgba(0,0,0,0.9);
     }
-
-    /* --- モバイル & タブレット対応 --- */
-    @media (max-width: 1200px) { 
-        .image-grid { column-count: 3; column-gap: 10px; } 
-        .img-container { margin-bottom: 10px; }
-    }
-    
-    @media (max-width: 768px) { 
-        .mobile-menu-toggle { display: flex; align-items: center; justify-content: center; }
-        
-        .sidebar { 
-            position: fixed;
-            top: 0;
-            left: 0;
-            height: 100vh;
-            z-index: 1000;
-            transform: translateX(-100%);
-            box-shadow: 2px 0 10px rgba(0,0,0,0.3);
-        }
-        .sidebar.open { transform: translateX(0); }
-        .sidebar-close { display: flex; }
-        
-        .main-content { 
-            width: 100%;
-            padding-top: 0;
-        }
-        
-        .header {
-            padding: 1rem;
-            padding-top: 4.5rem;
-        }
-        .header textarea { min-width: 150px; }
-        
-        .image-grid { 
-            column-count: 2; 
-            column-gap: 8px;
-        }
-        .img-container { margin-bottom: 8px; }
-        
-        .modal-nav { 
-            width: 44px; 
-            height: 44px; 
-            font-size: 1.2rem; 
-        }
-        .modal-nav.prev { left: 0.5rem; }
-        .modal-nav.next { right: 0.5rem; }
-        .modal-close { 
-            top: 0.5rem; 
-            right: 0.5rem; 
-            width: 44px; 
-            height: 44px; 
-            font-size: 1.5rem; 
-        }
-        .modal-content { padding: 1rem; }
-    }
-    
-    @media (max-width: 480px) { 
-        .image-grid { column-count: 1; }
-        
-        .header {
-            flex-direction: column;
-            gap: 0.75rem;
-        }
-        .header textarea,
-        .header button {
-            width: 100%;
-        }
-        
-        .gallery-wrapper { padding: 0.75rem; }
-        
-        .modal-nav.prev { left: 0.25rem; }
-        .modal-nav.next { right: 0.25rem; }
-        .modal-close { top: 0.25rem; right: 0.25rem; }
-        .modal-content { padding: 0.5rem; }
-    }
-    
-    /* モバイルメニューオーバーレイ */
-    .mobile-overlay {
-        display: none;
-        position: fixed;
-        top: 0;
-        left: 0;
-        width: 100%;
-        height: 100%;
-        background: rgba(0,0,0,0.5);
-        z-index: 999;
-        opacity: 0;
-        transition: opacity 0.3s;
-    }
-    .mobile-overlay.visible {
-        opacity: 1;
-    }
-    
-    @media (max-width: 768px) {
-        .mobile-overlay { display: block; }
-    }
 </style>
 </head>
 <body>
 
-<div class="mobile-overlay" id="mobileOverlay"></div>
-
-<button class="mobile-menu-toggle" id="mobileMenuToggle">☰</button>
-
 <div class="container">
-    <aside class="sidebar" id="sidebar">
-        <h2>
-            X Gallery
-            <button class="sidebar-close" id="sidebarClose">&times;</button>
-        </h2>
+    <aside class="sidebar">
+        <h2>Downloader</h2>
+        <div class="download-section">
+            <textarea id="tweetUrls" placeholder="Enter Tweet URLs..." rows="3"></textarea>
+            <button id="downloadBtn">Download</button>
+        </div>
+        
+        <h2>Tags</h2>
         <input type="search" id="userSearch" class="search-box" placeholder="Search users...">
         <ul id="navList" class="nav-list"></ul>
     </aside>
 
     <main class="main-content">
         <header class="header">
-            <textarea id="tweetUrls" placeholder="Enter Tweet URLs (separated by comma, space, or new line)" rows="1"></textarea>
-            <button id="downloadBtn">Download</button>
+            <h1>X Gallery</h1>
+            <form class="search-form" onsubmit="return false;">
+                <input type="search" placeholder="Search posts...">
+                <button type="submit">Search</button>
+            </form>
         </header>
         <div id="status"></div>
         <div id="galleryWrapper" class="gallery-wrapper"></div>
@@ -448,10 +317,6 @@
         status: document.getElementById('status'),
         downloadBtn: document.getElementById('downloadBtn'),
         tweetUrls: document.getElementById('tweetUrls'),
-        sidebar: document.getElementById('sidebar'),
-        mobileMenuToggle: document.getElementById('mobileMenuToggle'),
-        sidebarClose: document.getElementById('sidebarClose'),
-        mobileOverlay: document.getElementById('mobileOverlay'),
         modal: {
             overlay: document.getElementById('modalOverlay'),
             img: document.getElementById('modalImg'),
@@ -467,11 +332,10 @@
         galleryIndex: 0,
     };
 
-    // --- 初期化 ---
     document.addEventListener('DOMContentLoaded', () => {
         initNav();
         initEventListeners();
-        loadRandomImages();
+        loadLatestImages();
     });
 
     function initNav() {
@@ -481,11 +345,6 @@
     function initEventListeners() {
         G_ELEMENTS.userSearch.addEventListener('input', () => loadUsers(G_ELEMENTS.userSearch.value));
         G_ELEMENTS.downloadBtn.addEventListener('click', handleDownload);
-        
-        // モバイルメニュー制御
-        G_ELEMENTS.mobileMenuToggle.addEventListener('click', openSidebar);
-        G_ELEMENTS.sidebarClose.addEventListener('click', closeSidebar);
-        G_ELEMENTS.mobileOverlay.addEventListener('click', closeSidebar);
         
         const { overlay, close, prev, next, img } = G_ELEMENTS.modal;
         overlay.addEventListener('click', e => (e.target === overlay) && closeModal());
@@ -501,20 +360,6 @@
         });
     }
 
-    // --- モバイルメニュー制御 ---
-    function openSidebar() {
-        G_ELEMENTS.sidebar.classList.add('open');
-        G_ELEMENTS.mobileOverlay.classList.add('visible');
-        // モバイルでのスクロール防止は削除（入力に支障をきたすため）
-    }
-
-    function closeSidebar() {
-        G_ELEMENTS.sidebar.classList.remove('open');
-        G_ELEMENTS.mobileOverlay.classList.remove('visible');
-        // body overflowの制御も削除
-    }
-
-    // --- API 通信 ---
     async function fetchAPI(url) {
         try {
             const response = await fetch(url);
@@ -527,13 +372,12 @@
         }
     }
 
-    async function loadRandomImages() {
+    async function loadLatestImages() {
         setActiveNav('home');
         renderLoader();
-        closeSidebar(); // モバイルでメニューを閉じる
-        const data = await fetchAPI('/api/images/random');
+        const data = await fetchAPI('/api/images?sort=latest&limit=100');
         if (data) {
-            const title = 'Top Gallery (Random 50)';
+            const title = 'Latest Posts';
             if (data.images.length === 0) {
                 renderPlaceholder(title, 'No images found. Start by downloading some!');
                 return;
@@ -550,24 +394,10 @@
     async function loadUserTweets(username) {
         setActiveNav(username);
         renderLoader();
-        closeSidebar(); // モバイルでメニューを閉じる
         const data = await fetchAPI(`/api/users/${username}/tweets`);
         if (data) {
-            G_ELEMENTS.galleryWrapper.innerHTML = '';
-            const title = document.createElement('h3');
-            title.className = 'gallery-title';
-            title.textContent = `@${username}'s Gallery`;
-            G_ELEMENTS.galleryWrapper.appendChild(title);
-
-            if (data.tweets.length === 0) {
-                renderPlaceholder(null, 'No tweets found for this user.');
-                return;
-            }
-            
-            data.tweets.forEach(tweet => {
-                const tweetTitle = `Tweet ID: ${tweet.tweet_id}`;
-                renderImageGrid(tweetTitle, tweet.images, true);
-            });
+            const allImages = data.tweets.flatMap(tweet => tweet.images);
+            renderImageGrid(`@${username}'s Posts`, allImages);
         }
     }
 
@@ -586,9 +416,10 @@
             });
             const data = await response.json();
             const totalDownloaded = data.results.reduce((sum, r) => sum + (r.downloaded_count || 0), 0);
-            G_ELEMENTS.status.textContent = `Completed! Downloaded ${totalDownloaded} images.`;
+            G_ELEMENTS.status.textContent = `Completed! Downloaded ${totalDownloaded} new images.`;
             G_ELEMENTS.tweetUrls.value = '';
-            initNav(); // Refresh user list
+            initNav();
+            loadLatestImages();
         } catch (error) {
             G_ELEMENTS.status.textContent = "An error occurred during download.";
             console.error("Download error:", error);
@@ -597,14 +428,12 @@
         }
     }
 
-    // --- レンダリング & DOM操作 ---
     function renderNavList(users) {
         G_ELEMENTS.navList.innerHTML = '';
-        // トップギャラリー項目を追加
         const homeLi = document.createElement('li');
         homeLi.dataset.navId = 'home';
-        homeLi.innerHTML = `<span>🏠 Top Gallery</span>`;
-        homeLi.onclick = loadRandomImages;
+        homeLi.innerHTML = `<span>🏠 All Posts</span>`;
+        homeLi.onclick = loadLatestImages;
         G_ELEMENTS.navList.appendChild(homeLi);
 
         users.forEach(user => {
@@ -617,13 +446,14 @@
         setActiveNav(G_STATE.activeNav);
     }
     
-    function renderImageGrid(title, images, append = false) {
-        const gridContainer = document.createElement('div');
+    function renderImageGrid(title, images) {
+        G_ELEMENTS.galleryWrapper.innerHTML = '';
+
         if (title) {
-            const gridTitle = document.createElement('h4');
+            const gridTitle = document.createElement('h3');
             gridTitle.className = 'gallery-title';
             gridTitle.textContent = title;
-            gridContainer.appendChild(gridTitle);
+            G_ELEMENTS.galleryWrapper.appendChild(gridTitle);
         }
         
         const grid = document.createElement('div');
@@ -641,10 +471,7 @@
             container.appendChild(imageEl);
             grid.appendChild(container);
         });
-        gridContainer.appendChild(grid);
-
-        if (!append) G_ELEMENTS.galleryWrapper.innerHTML = '';
-        G_ELEMENTS.galleryWrapper.appendChild(gridContainer);
+        G_ELEMENTS.galleryWrapper.appendChild(grid);
     }
     
     function renderLoader() {
@@ -665,7 +492,6 @@
         });
     }
 
-    // --- モーダル制御 ---
     function showModal(gallery, index) {
         G_STATE.gallery = gallery;
         G_STATE.galleryIndex = index;
@@ -686,7 +512,7 @@
     function changeModalImage(direction) {
         const newIndex = G_STATE.galleryIndex + direction;
         const len = G_STATE.gallery.length;
-        G_STATE.galleryIndex = (newIndex % len + len) % len; // ループ処理
+        G_STATE.galleryIndex = (newIndex % len + len) % len;
         updateModalImage();
     }
 </script>
