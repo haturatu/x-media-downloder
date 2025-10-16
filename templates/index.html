@@ -377,7 +377,7 @@
         if (!urls.length) { alert("Please enter at least one URL."); return; }
         
         G_ELEMENTS.downloadBtn.disabled = true;
-        G_ELEMENTS.status.textContent = "Downloading...";
+        G_ELEMENTS.status.textContent = "Sending to background queue...";
 
         try {
             const data = await fetchAPI('/api/download', { 
@@ -385,15 +385,24 @@
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify({ urls })
             });
-            if (!data) return;
-
-            const totalDownloaded = data.results.reduce((sum, r) => sum + (r.downloaded_count || 0), 0);
-            G_ELEMENTS.status.textContent = `Completed! Downloaded ${totalDownloaded} new images.`;
-            G_ELEMENTS.tweetUrls.value = '';
-            initNav();
-            if (G_STATE.activeView === 'home') {
-                loadLatestImages();
+            if (!data) {
+                // fetchAPI already handles setting the status on error
+                return;
             }
+
+            G_ELEMENTS.status.textContent = data.message || "Tasks queued successfully.";
+            G_ELEMENTS.tweetUrls.value = '';
+            
+            // Refresh the UI after a short delay to give workers time to start.
+            setTimeout(() => {
+                initNav();
+                if (G_STATE.activeView === 'home') {
+                    loadLatestImages();
+                }
+            }, 3000);
+
+        } catch (error) {
+            G_ELEMENTS.status.textContent = `Error: ${error.message}`;
         } finally {
             G_ELEMENTS.downloadBtn.disabled = false;
         }
