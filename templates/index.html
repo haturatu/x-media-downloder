@@ -76,26 +76,78 @@
         box-sizing: border-box;
         font-size: 1rem;
     }
-    .nav-list { 
-        list-style: none; 
-        padding: 0; 
-        margin: 0; 
-        overflow-y: auto; 
-        flex-grow: 1; 
+    .nav-list {
+        list-style: none;
+        padding: 0;
+        margin: 0;
+        overflow-y: auto;
+        flex-grow: 1;
     }
-    .nav-list li { 
-        padding: 0.75rem; 
-        cursor: pointer; 
-        border-radius: 8px; 
-        transition: background-color 0.2s; 
-        display: flex; 
-        justify-content: space-between; 
-        align-items: center;
+    .nav-list li { /* This will be the .user-item */
         margin-bottom: 0.25rem;
     }
-    .nav-list li:hover { background-color: rgba(255, 255, 255, 0.08); }
-    .nav-list li.active { background-color: rgba(0, 123, 255, 0.2); font-weight: bold; }
+    .nav-list li.home-link {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 0.75rem;
+        cursor: pointer;
+        border-radius: 8px;
+        transition: background-color 0.2s;
+    }
+    .nav-list li.home-link:hover { background-color: rgba(255, 255, 255, 0.08); }
+    .nav-list li.home-link.active { background-color: rgba(0, 123, 255, 0.2); font-weight: bold; }
+
     .nav-list .tweet-count { color: var(--text-secondary-color); font-size: 0.9rem; }
+
+    /* --- Accordion Nav --- */
+    .nav-list .user-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        cursor: pointer;
+        padding: 0.75rem;
+        border-radius: 8px;
+        transition: background-color 0.2s;
+    }
+    .nav-list .user-header:hover {
+        background-color: rgba(255, 255, 255, 0.08);
+    }
+    .nav-list .user-item.active > .user-header {
+        font-weight: bold;
+        color: var(--primary-color);
+    }
+    .nav-list .tweet-list {
+        list-style: none;
+        padding: 0 0 0 1.5rem;
+        margin: 0;
+        max-height: 0;
+        overflow: hidden;
+        transition: max-height 0.3s ease-out;
+    }
+    .nav-list .user-item.open > .tweet-list {
+        max-height: 500px; /* Adjust as needed */
+        overflow-y: auto;
+    }
+    .nav-list .tweet-list li {
+        padding: 0.5rem 0.75rem;
+        cursor: pointer;
+        border-radius: 6px;
+        color: var(--text-secondary-color);
+        transition: background-color 0.2s, color 0.2s;
+        font-size: 0.9rem;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+    .nav-list .tweet-list li:hover {
+        background-color: rgba(255, 255, 255, 0.05);
+        color: var(--text-color);
+    }
+    .nav-list .tweet-list li.active {
+        color: var(--primary-color);
+        font-weight: 600;
+    }
 
     /* --- Main Content --- */
     .main-content { 
@@ -282,7 +334,7 @@
             <button id="downloadBtn">Download</button>
         </div>
         
-        <h2>Tags</h2>
+        <h2>Users</h2>
         <input type="search" id="userSearch" class="search-box" placeholder="Search users...">
         <ul id="navList" class="nav-list"></ul>
     </aside>
@@ -290,10 +342,6 @@
     <main class="main-content">
         <header class="header">
             <h1>X Gallery</h1>
-            <form class="search-form" onsubmit="return false;">
-                <input type="search" placeholder="Search posts...">
-                <button type="submit">Search</button>
-            </form>
         </header>
         <div id="status"></div>
         <div id="galleryWrapper" class="gallery-wrapper"></div>
@@ -327,7 +375,8 @@
     };
 
     let G_STATE = {
-        activeNav: 'home',
+        activeUser: 'home',
+        activeTweet: null,
         gallery: [],
         galleryIndex: 0,
     };
@@ -353,6 +402,11 @@
         next.addEventListener('click', () => changeModalImage(1));
         img.addEventListener('click', () => changeModalImage(1));
         document.addEventListener('keydown', e => {
+            if (e.ctrlKey && e.key === 'Enter') {
+                e.preventDefault();
+                G_ELEMENTS.downloadBtn.click();
+                return;
+            }
             if (!overlay.classList.contains('visible')) return;
             if (e.key === 'ArrowRight') changeModalImage(1);
             if (e.key === 'ArrowLeft') changeModalImage(-1);
@@ -390,15 +444,42 @@
         const data = await fetchAPI(`/api/users?q=${encodeURIComponent(query)}`);
         if (data) renderNavList(data.users);
     }
-    
-    async function loadUserTweets(username) {
-        setActiveNav(username);
-        renderLoader();
-        const data = await fetchAPI(`/api/users/${username}/tweets`);
-        if (data) {
-            const allImages = data.tweets.flatMap(tweet => tweet.images);
-            renderImageGrid(`@${username}'s Posts`, allImages);
+
+    async function toggleUserTweets(username, userItem) {
+        const tweetList = userItem.querySelector('.tweet-list');
+        const isAlreadyOpen = userItem.classList.contains('open');
+
+        // Close other open users
+        document.querySelectorAll('#navList .user-item.open').forEach(item => {
+            if (item !== userItem) item.classList.remove('open');
+        });
+
+        if (isAlreadyOpen) {
+            userItem.classList.remove('open');
+        } else {
+            userItem.classList.add('open');
+            setActiveNav(username);
+            if (!tweetList.hasChildNodes()) {
+                const data = await fetchAPI(`/api/users/${username}/tweets`);
+                if (data && data.tweets) {
+                    data.tweets.forEach(tweet => {
+                        const li = document.createElement('li');
+                        li.dataset.tweetId = tweet.tweet_id;
+                        li.textContent = tweet.tweet_id;
+                        li.onclick = (e) => {
+                            e.stopPropagation();
+                            loadTweetImages(username, tweet.tweet_id, tweet.images, li);
+                        };
+                        tweetList.appendChild(li);
+                    });
+                }
+            }
         }
+    }
+
+    function loadTweetImages(username, tweetId, images, tweetLi) {
+        setActiveNav(username, tweetId);
+        renderImageGrid(`@${username} / ${tweetId}`, images);
     }
 
     async function handleDownload() {
@@ -418,8 +499,10 @@
             const totalDownloaded = data.results.reduce((sum, r) => sum + (r.downloaded_count || 0), 0);
             G_ELEMENTS.status.textContent = `Completed! Downloaded ${totalDownloaded} new images.`;
             G_ELEMENTS.tweetUrls.value = '';
-            initNav();
-            loadLatestImages();
+            initNav(); // Reload users
+            if (G_STATE.activeUser === 'home') {
+                loadLatestImages();
+            }
         } catch (error) {
             G_ELEMENTS.status.textContent = "An error occurred during download.";
             console.error("Download error:", error);
@@ -432,18 +515,29 @@
         G_ELEMENTS.navList.innerHTML = '';
         const homeLi = document.createElement('li');
         homeLi.dataset.navId = 'home';
+        homeLi.classList.add('home-link');
         homeLi.innerHTML = `<span>🏠 All Posts</span>`;
         homeLi.onclick = loadLatestImages;
         G_ELEMENTS.navList.appendChild(homeLi);
 
         users.forEach(user => {
-            const li = document.createElement('li');
-            li.dataset.navId = user.username;
-            li.innerHTML = `<span>${user.username}</span><span class="tweet-count">${user.tweet_count}</span>`;
-            li.onclick = () => loadUserTweets(user.username);
-            G_ELEMENTS.navList.appendChild(li);
+            const userItem = document.createElement('li');
+            userItem.classList.add('user-item');
+            userItem.dataset.navId = user.username;
+
+            const userHeader = document.createElement('div');
+            userHeader.className = 'user-header';
+            userHeader.innerHTML = `<span>${user.username}</span><span class="tweet-count">${user.tweet_count}</span>`;
+            userHeader.onclick = () => toggleUserTweets(user.username, userItem);
+            
+            const tweetList = document.createElement('ul');
+            tweetList.className = 'tweet-list';
+
+            userItem.appendChild(userHeader);
+            userItem.appendChild(tweetList);
+            G_ELEMENTS.navList.appendChild(userItem);
         });
-        setActiveNav(G_STATE.activeNav);
+        setActiveNav(G_STATE.activeUser, G_STATE.activeTweet);
     }
     
     function renderImageGrid(title, images) {
@@ -485,10 +579,26 @@
         G_ELEMENTS.galleryWrapper.innerHTML = html;
     }
     
-    function setActiveNav(navId) {
-        G_STATE.activeNav = navId;
+    function setActiveNav(userId, tweetId = null) {
+        G_STATE.activeUser = userId;
+        G_STATE.activeTweet = tweetId;
+
         document.querySelectorAll('#navList li').forEach(li => {
-            li.classList.toggle('active', li.dataset.navId === navId);
+            const isUserItem = li.classList.contains('user-item');
+            const isHomeLink = li.classList.contains('home-link');
+
+            if (isHomeLink) {
+                li.classList.toggle('active', li.dataset.navId === userId);
+            } else if (isUserItem) {
+                li.classList.toggle('active', li.dataset.navId === userId);
+                if (li.dataset.navId === userId && tweetId) {
+                    li.classList.add('open'); // Keep user open if a tweet is active
+                }
+                // Set active on tweet
+                li.querySelectorAll('.tweet-list li').forEach(tweetLi => {
+                    tweetLi.classList.toggle('active', tweetLi.dataset.tweetId === tweetId);
+                });
+            }
         });
     }
 
