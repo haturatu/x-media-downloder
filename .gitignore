@@ -2,3 +2,4 @@ downloaded_images
 *.log
 .env
 *.db
+__pycache__

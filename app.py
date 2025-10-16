@@ -282,22 +282,30 @@ def get_all_tags_api():
     return jsonify({"tags": tags})
 
 def _autotag_all_task():
-    """The actual task of iterating and tagging all files."""
+    """The actual task of iterating and tagging all files in parallel."""
     print("Starting background task: autotag all files.")
-    with app.app_context():
-        database.clear_all_tags()
-        image_files = []
-        for root, _, files in os.walk(UPLOAD_FOLDER):
-            for file in files:
-                if file.lower().endswith(('.jpg', '.jpeg', '.png', '.webp', '.gif')):
-                    filepath = os.path.join(root, file)
-                    relative_path = os.path.relpath(filepath, UPLOAD_FOLDER).replace("\\", "/")
-                    image_files.append((filepath, relative_path))
-        
-        for filepath, relative_path in image_files:
-            autotag_file(filepath, relative_path)
+    try:
+        with app.app_context():
+            database.clear_all_tags()
+            image_files = []
+            for root, _, files in os.walk(UPLOAD_FOLDER):
+                for file in files:
+                    if file.lower().endswith(('.jpg', '.jpeg', '.png', '.webp', '.gif')):
+                        filepath = os.path.join(root, file)
+                        relative_path = os.path.relpath(filepath, UPLOAD_FOLDER).replace("\\", "/")
+                        image_files.append((filepath, relative_path))
             
-    print("Finished background task: autotag all files.")
+            # Helper function to unpack arguments for executor.map
+            def autotag_wrapper(args):
+                return autotag_file(*args)
+
+            # Run autotagging in parallel
+            list(executor.map(autotag_wrapper, image_files)) # list() consumes the iterator to ensure completion
+            
+    except Exception as e:
+        print(f"An error occurred during the autotagging task: {e}")
+    finally:
+        print("Finished background task: autotag all files.")
 
 @app.route('/api/autotag/reload', methods=['POST'])
 def autotag_reload_api():
