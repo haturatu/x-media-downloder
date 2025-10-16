@@ -1,4 +1,3 @@
-
 import sqlite3
 import os
 
@@ -12,13 +11,12 @@ def get_db_connection():
 
 def init_db():
     """Initializes the database and creates the necessary tables."""
-    if os.path.exists(DATABASE_PATH):
-        return
-        
     conn = get_db_connection()
     cursor = conn.cursor()
+    
+    # Main table for tags
     cursor.execute("""
-        CREATE TABLE image_tags (
+        CREATE TABLE IF NOT EXISTS image_tags (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             filepath TEXT NOT NULL,
             tag TEXT NOT NULL,
@@ -26,6 +24,14 @@ def init_db():
             UNIQUE(filepath, tag)
         );
     """)
+    
+    # Table to track processed images by their content hash
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS processed_images (
+            image_hash TEXT PRIMARY KEY
+        );
+    """)
+    
     conn.commit()
     conn.close()
     print("Database initialized.")
@@ -33,7 +39,6 @@ def init_db():
 def add_tags_for_file(filepath, tags):
     """
     Adds a list of tags for a specific file to the database.
-    Each tag is a dictionary with 'tag' and 'confidence'.
     """
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -48,10 +53,26 @@ def add_tags_for_file(filepath, tags):
     conn.commit()
     conn.close()
 
+def mark_image_as_processed(image_hash):
+    """Adds an image hash to the processed_images table."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("INSERT OR IGNORE INTO processed_images (image_hash) VALUES (?)", (image_hash,))
+    conn.commit()
+    conn.close()
+
+def is_image_processed(image_hash):
+    """Checks if an image hash exists in the processed_images table."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT 1 FROM processed_images WHERE image_hash = ?", (image_hash,))
+    result = cursor.fetchone()
+    conn.close()
+    return result is not None
+
 def get_tags_for_files(filepaths):
     """
     Retrieves all tags for a given list of filepaths.
-    Returns a dictionary mapping each filepath to a list of its tags.
     """
     if not filepaths:
         return {}
@@ -89,19 +110,9 @@ def get_all_tags():
     conn.close()
     return [{"tag": row['tag'], "count": row['tag_count']} for row in rows]
 
-def clear_all_tags():
-    """Deletes all records from the image_tags table."""
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("DELETE FROM image_tags")
-    conn.commit()
-    conn.close()
-    print("All tags have been cleared from the database.")
-
 def find_files_by_tags(tags):
     """
     Finds all filepaths that have all of the specified tags.
-    `tags` should be a list of tag strings.
     """
     if not tags:
         return []
@@ -109,10 +120,7 @@ def find_files_by_tags(tags):
     conn = get_db_connection()
     cursor = conn.cursor()
 
-    # Base query to find files matching the first tag
     query = "SELECT filepath FROM image_tags WHERE tag = ?"
-    
-    # Intersect with files matching subsequent tags
     for i in range(1, len(tags)):
         query += " INTERSECT SELECT filepath FROM image_tags WHERE tag = ?"
         
