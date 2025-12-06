@@ -374,8 +374,7 @@ def _autotag_untagged_task(self):
                             try:
                                 with open(filepath, 'rb') as f:
                                     image_hash = hashlib.md5(f.read()).hexdigest()
-                                if not database.is_image_processed(image_hash):
-                                    untagged_files_to_process.append((filepath, relative_path, image_hash))
+                                untagged_files_to_process.append((filepath, relative_path, image_hash))
                             except Exception as e:
                                 print(f"Error processing file {filepath} for hashing: {e}")
             
