@@ -336,16 +336,23 @@ def _autotag_all_task(self):
 
             def autotag_and_mark(args):
                 filepath, relative_path, image_hash = args
-                autotag_file(filepath, relative_path, image_hash)
-                database.mark_image_as_processed(image_hash)
-                return relative_path
+                try:
+                    autotag_file(filepath, relative_path, image_hash)
+                    database.mark_image_as_processed(image_hash)
+                    return True, relative_path # Success, and the path
+                except Exception as e:
+                    print(f"Error during autotag_and_mark for {relative_path}: {e}")
+                    return False, relative_path # Failure, and the path
 
             futures = {executor.submit(autotag_and_mark, args): args for args in all_files_to_process}
+            processed_count = 0
             for i, future in enumerate(as_completed(futures)):
-                relative_path = future.result()
-                self.update_state(state='PROGRESS', meta={'current': i + 1, 'total': total_files, 'status': f'Processing {relative_path}'})
+                success, relative_path = future.result()
+                if success:
+                    processed_count += 1
+                self.update_state(state='PROGRESS', meta={'current': processed_count, 'total': total_files, 'status': f'Processed {processed_count}/{total_files} (last: {relative_path}, success: {success})'})
 
-            return {'current': total_files, 'total': total_files, 'status': 'Complete!'}
+            return {'current': processed_count, 'total': total_files, 'status': f'Complete! Processed {processed_count} files.'}
             
     except Exception as e:
         print(f"An error occurred during the force autotagging task: {e}")
@@ -384,16 +391,23 @@ def _autotag_untagged_task(self):
             
             def autotag_and_mark(args):
                 filepath, relative_path, image_hash = args
-                autotag_file(filepath, relative_path, image_hash)
-                database.mark_image_as_processed(image_hash)
-                return relative_path
+                try:
+                    autotag_file(filepath, relative_path, image_hash)
+                    database.mark_image_as_processed(image_hash)
+                    return True, relative_path # Success, and the path
+                except Exception as e:
+                    print(f"Error during autotag_and_mark for {relative_path}: {e}")
+                    return False, relative_path # Failure, and the path
 
             futures = {executor.submit(autotag_and_mark, args): args for args in untagged_files_to_process}
+            processed_count = 0
             for i, future in enumerate(as_completed(futures)):
-                relative_path = future.result()
-                self.update_state(state='PROGRESS', meta={'current': i + 1, 'total': total_files, 'status': f'Processing {relative_path}'})
+                success, relative_path = future.result()
+                if success:
+                    processed_count += 1
+                self.update_state(state='PROGRESS', meta={'current': processed_count, 'total': total_files, 'status': f'Processed {processed_count}/{total_files} (last: {relative_path}, success: {success})'})
 
-            return {'current': total_files, 'total': total_files, 'status': 'Complete!'}
+            return {'current': processed_count, 'total': total_files, 'status': f'Complete! Processed {processed_count} files.'}
 
     except Exception as e:
         print(f"An error occurred during the untagged autotagging task: {e}")
