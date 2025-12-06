@@ -56,6 +56,7 @@ services:
   autotagger:
     build: ../autotagger
     restart: always
+    user: "65534:65534"
     ports:
       - "5000:5000"
     volumes:
