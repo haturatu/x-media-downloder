@@ -2,8 +2,7 @@ version: '3.8'
 
 networks:
   autotagger-service:
-    name: autotagger-service
-    external: true
+    driver: bridge
 
 services:
   redis:
@@ -53,3 +52,18 @@ services:
       - autotagger-service
     mem_limit: "256m"
     cpus: "0.2"
+
+  autotagger:
+    build: ../autotagger
+    restart: always
+    ports:
+      - "5000:5000"
+    volumes:
+      - ../autotagger:/autotagger
+    mem_limit: "1g"
+    cpus: "1.0"
+    shm_size: "2gb"
+    networks:
+      - default
+      - autotagger-service
+
