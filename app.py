@@ -27,11 +27,18 @@ AUTOTAGGER_ENABLED = os.getenv('AUTOTAGGER') == 'true'
 AUTOTAGGER_URL = os.getenv('AUTOTAGGER_URL')
 # ---------------------
 
+# --- In-memory Task Store ---
+TASK_STORE = {
+    'autotag_task_id': None
+}
+# --------------------------
+
 # --- Celery Configuration ---
 app.config.update(
     CELERY_BROKER_URL='sqla+sqlite:///celery_broker.db',
     CELERY_RESULT_BACKEND='db+sqlite:///celery_results.db'
 )
+
 
 def make_celery(app):
     celery = Celery(
@@ -296,13 +303,15 @@ def get_all_tags_api():
     tags = database.get_all_tags()
     return jsonify({"tags": tags})
 
-def _autotag_all_task():
+@celery.task(bind=True)
+def _autotag_all_task(self):
     """The actual task of clearing the DB and re-tagging EVERYTHING."""
     print("Starting background task: FORCE AUTOTAG ALL IMAGES.")
     try:
         with app.app_context():
             # 1. Clear all existing tag and processing data
             print("Clearing all existing tags and processed image history...")
+            self.update_state(state='PROGRESS', meta={'current': 0, 'total': 1, 'status': 'Clearing database...'})
             database.delete_all_tags()
             database.clear_all_processed_images()
             print("Database cleared.")
@@ -320,29 +329,38 @@ def _autotag_all_task():
                         except Exception as e:
                             print(f"Error processing file {filepath} for hashing: {e}")
             
-            if not all_files_to_process:
+            total_files = len(all_files_to_process)
+            if total_files == 0:
                 print("No images found to tag.")
-                return
+                return {'current': 0, 'total': 0, 'status': 'No images found to process.'}
 
-            print(f"Found {len(all_files_to_process)} images to force re-tag.")
+            print(f"Found {total_files} images to force re-tag.")
+            self.update_state(state='PROGRESS', meta={'current': 0, 'total': total_files, 'status': 'Starting processing...'})
 
-            def autotag_wrapper(args):
+            def autotag_wrapper(args_with_index):
+                index, args = args_with_index
                 filepath, relative_path, image_hash = args
                 autotag_file(filepath, relative_path, image_hash)
                 database.mark_image_as_processed(image_hash)
+                self.update_state(state='PROGRESS', meta={'current': index + 1, 'total': total_files, 'status': f'Processing {relative_path}'})
 
-            list(executor.map(autotag_wrapper, all_files_to_process))
+            list(executor.map(autotag_wrapper, enumerate(all_files_to_process)))
+            return {'current': total_files, 'total': total_files, 'status': 'Complete!'}
             
     except Exception as e:
         print(f"An error occurred during the force autotagging task: {e}")
+        self.update_state(state='FAILURE', meta={'exc_type': type(e).__name__, 'exc_message': str(e)})
+        raise e
     finally:
         print("Finished background task: force autotag all files.")
 
-def _autotag_untagged_task():
+@celery.task(bind=True)
+def _autotag_untagged_task(self):
     """The task of tagging only files that have no tags."""
     print("Starting background task: autotag untagged files.")
     try:
         with app.app_context():
+            self.update_state(state='PROGRESS', meta={'current': 0, 'total': 1, 'status': 'Finding untagged files...'})
             tagged_files = database.get_all_image_filepaths_from_db()
             untagged_files_to_process = []
 
@@ -361,21 +379,29 @@ def _autotag_untagged_task():
                             except Exception as e:
                                 print(f"Error processing file {filepath} for hashing: {e}")
             
-            if not untagged_files_to_process:
+            total_files = len(untagged_files_to_process)
+            if total_files == 0:
                 print("No new untagged images to process.")
-                return
+                return {'current': 0, 'total': 0, 'status': 'No new untagged images to process.'}
 
-            print(f"Found {len(untagged_files_to_process)} untagged images to process.")
 
-            def autotag_wrapper(args):
+            print(f"Found {total_files} untagged images to process.")
+            self.update_state(state='PROGRESS', meta={'current': 0, 'total': total_files, 'status': 'Starting processing...'})
+
+            def autotag_wrapper(args_with_index):
+                index, args = args_with_index
                 filepath, relative_path, image_hash = args
                 autotag_file(filepath, relative_path, image_hash)
                 database.mark_image_as_processed(image_hash)
+                self.update_state(state='PROGRESS', meta={'current': index + 1, 'total': total_files, 'status': f'Processing {relative_path}'})
 
-            list(executor.map(autotag_wrapper, untagged_files_to_process))
+            list(executor.map(autotag_wrapper, enumerate(untagged_files_to_process)))
+            return {'current': total_files, 'total': total_files, 'status': 'Complete!'}
 
     except Exception as e:
         print(f"An error occurred during the untagged autotagging task: {e}")
+        self.update_state(state='FAILURE', meta={'exc_type': type(e).__name__, 'exc_message': str(e)})
+        raise e
     finally:
         print("Finished background task: autotag untagged files.")
 
@@ -384,18 +410,56 @@ def autotag_reload_api():
     if not AUTOTAGGER_ENABLED or not AUTOTAGGER_URL:
         return jsonify({"success": False, "message": "Autotagger is not configured."}), 400
     
-    executor.submit(_autotag_all_task)
+    task = _autotag_all_task.delay()
+    TASK_STORE['autotag_task_id'] = task.id
     
-    return jsonify({"success": True, "message": "Started force re-tagging for ALL images in the background."})
+    return jsonify({"success": True, "message": "Started force re-tagging for ALL images in the background.", "task_id": task.id})
 
 @app.route('/api/autotag/untagged', methods=['POST'])
 def autotag_untagged_api():
     if not AUTOTAGGER_ENABLED or not AUTOTAGGER_URL:
         return jsonify({"success": False, "message": "Autotagger is not configured."}), 400
     
-    executor.submit(_autotag_untagged_task)
+    task = _autotag_untagged_task.delay()
+    TASK_STORE['autotag_task_id'] = task.id
     
-    return jsonify({"success": True, "message": "Autotagging for untagged images started in the background."})
+    return jsonify({"success": True, "message": "Autotagging for untagged images started in the background.", "task_id": task.id})
+
+@app.route('/api/autotag/status')
+def autotag_status_api():
+    task_id = TASK_STORE.get('autotag_task_id')
+    if not task_id:
+        return jsonify({'state': 'NOT_FOUND', 'status': 'No autotagging task has been run yet.'})
+
+    task = celery.AsyncResult(task_id)
+    
+    if task.state == 'PENDING':
+        response = {'state': task.state, 'status': 'Task is pending...'}
+    elif task.state == 'PROGRESS':
+        info = task.info or {}
+        response = {
+            'state': task.state,
+            'current': info.get('current', 0),
+            'total': info.get('total', 1),
+            'status': info.get('status', '')
+        }
+    elif task.state == 'SUCCESS':
+        info = task.result or {}
+        response = {
+            'state': task.state,
+            'current': info.get('current', 0),
+            'total': info.get('total', 0),
+            'status': info.get('status', 'Task completed successfully.')
+        }
+    else: # FAILURE or other states
+        info = task.info or {}
+        response = {
+            'state': task.state,
+            'status': f"Task failed: {info.get('exc_message', str(task.info))}"
+        }
+        
+    return jsonify(response)
+
 
 
 @app.route('/api/images/retag', methods=['POST'])

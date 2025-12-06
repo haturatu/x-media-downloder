@@ -244,6 +244,8 @@
             <span id="autotagMenuClose" class="autotag-menu-close">&times;</span>
         </div>
         <div class="autotag-menu-body">
+            <button id="autotagStatusBtn" class="header-btn">View Status</button>
+            <hr>
             <button id="tagUntaggedBtn" class="header-btn">Tag Untagged Images</button>
             <hr>
             <div class="force-retag-section">
@@ -340,6 +342,8 @@
 
             close: document.getElementById('autotagMenuClose'),
 
+            statusBtn: document.getElementById('autotagStatusBtn'),
+
             tagUntaggedBtn: document.getElementById('tagUntaggedBtn'),
 
             forceRetagConfirm: document.getElementById('forceRetagConfirm'),
@@ -354,7 +358,7 @@
 
     let G_STATE = {
 
-        activeView: 'home', // 'home', 'user', 'tag'
+        activeView: 'home', // 'home', 'user', 'tag', 'status'
 
         activeUser: null,
 
@@ -367,6 +371,8 @@
         allUsers: [],
 
         allTags: [],
+
+        statusInterval: null,
 
     };
 
@@ -449,6 +455,8 @@
         autotagMenu.close.addEventListener('click', () => { autotagMenu.modal.classList.remove('visible'); });
 
         autotagMenu.modal.addEventListener('click', (e) => { if (e.target === autotagMenu.modal) { autotagMenu.modal.classList.remove('visible'); } });
+
+        autotagMenu.statusBtn.addEventListener('click', showStatusPage);
 
         autotagMenu.tagUntaggedBtn.addEventListener('click', handleTagUntagged);
 
@@ -546,13 +554,133 @@
 
             G_ELEMENTS.status.textContent = `Error: ${error.message}`;
 
-            G_ELEMENTS.galleryWrapper.innerHTML = `<p class="placeholder">Failed to load data. Please try again.</p>`;
+            if (G_STATE.activeView !== 'status') {
+
+                G_ELEMENTS.galleryWrapper.innerHTML = `<p class="placeholder">Failed to load data. Please try again.</p>`;
+
+            }
 
             return null;
 
         }
 
     }
+
+    
+
+    function clearStatusInterval() {
+
+        if (G_STATE.statusInterval) {
+
+            clearInterval(G_STATE.statusInterval);
+
+            G_STATE.statusInterval = null;
+
+        }
+
+    }
+
+
+
+    async function updateStatus() {
+
+        const data = await fetchAPI('/api/autotag/status');
+
+        if (!data) {
+
+            G_ELEMENTS.galleryWrapper.innerHTML = '<h2>Error fetching status.</h2>';
+
+            clearStatusInterval();
+
+            return;
+
+        }
+
+
+
+        let progressPercent = 0;
+
+        const total = data.total || 0;
+
+        const current = data.current || 0;
+
+
+
+        if (total > 0) {
+
+            progressPercent = (current / total) * 100;
+
+        } else if (data.state === 'SUCCESS') {
+
+            progressPercent = 100;
+
+        }
+
+        
+
+        const statusDetail = data.status || 'Waiting for task to start...';
+
+        const progressText = (data.state === 'PROGRESS' || data.state === 'SUCCESS') ? `${current} / ${total}` : 'N/A';
+
+
+
+        const html = `
+
+            <div style="padding: 1rem;">
+
+                <h2 class="gallery-title">Autotagging Task Status</h2>
+
+                <p><strong>State:</strong> ${data.state}</p>
+
+                <p><strong>Details:</strong> ${statusDetail}</p>
+
+                <p><strong>Progress:</strong> ${progressText}</p>
+
+                <div style="border: 1px solid var(--border-color); border-radius: 4px; padding: 2px; background: var(--bg-color);">
+
+                    <div style="width: ${progressPercent}%; background: var(--primary-color); height: 24px; border-radius: 2px; text-align: center; color: white; font-weight: bold; line-height: 24px; transition: width 0.3s ease;">
+
+                        ${Math.round(progressPercent)}%
+
+                    </div>
+
+                </div>
+
+            </div>
+
+        `;
+
+        G_ELEMENTS.galleryWrapper.innerHTML = html;
+
+
+
+        if (data.state === 'SUCCESS' || data.state === 'FAILURE' || data.state === 'REVOKED' || data.state === 'NOT_FOUND') {
+
+            clearStatusInterval();
+
+        }
+
+    }
+
+
+
+    function showStatusPage() {
+
+        setActiveNav({ view: 'status' });
+
+        G_ELEMENTS.autotagMenu.modal.classList.remove('visible');
+
+        G_ELEMENTS.galleryWrapper.innerHTML = '<div class="loader"></div>';
+
+        
+
+        updateStatus(); // Initial call
+
+        G_STATE.statusInterval = setInterval(updateStatus, 2000); // Poll every 2 seconds
+
+    }
+
+
 
 
 
@@ -585,8 +713,6 @@
 
 
     async function loadImagesByTags(tags) {
-
-        const tagString = tags.join(',');
 
         setActiveNav({ view: 'tag', tags });
 
@@ -728,6 +854,8 @@
 
     async function handleTagUntagged() {
 
+        G_ELEMENTS.autotagMenu.modal.classList.remove('visible');
+
         G_ELEMENTS.status.textContent = "Starting to tag untagged images in the background...";
 
         const data = await fetchAPI('/api/autotag/untagged', { method: 'POST' });
@@ -736,15 +864,17 @@
 
             G_ELEMENTS.status.textContent = data.message;
 
-        }
+            setTimeout(showStatusPage, 500); // Navigate to status page after starting
 
-        G_ELEMENTS.autotagMenu.modal.classList.remove('visible');
+        }
 
     }
 
 
 
     async function handleForceRetag() {
+
+        G_ELEMENTS.autotagMenu.modal.classList.remove('visible');
 
         G_ELEMENTS.status.textContent = "Starting to force re-tag all images. This will take a while...";
 
@@ -762,7 +892,7 @@
 
         G_ELEMENTS.autotagMenu.forceRetagBtn.disabled = true;
 
-        G_ELEMENTS.autotagMenu.modal.classList.remove('visible');
+        setTimeout(showStatusPage, 500); // Navigate to status page after starting
 
     }
 
@@ -956,6 +1086,8 @@
 
     function setActiveNav({ view, user = null, tags = [] }) {
 
+        clearStatusInterval(); // Stop polling when we navigate away
+
         G_STATE.activeView = view;
 
         G_STATE.activeUser = user;
@@ -987,6 +1119,8 @@
             });
 
         }
+
+        // No active link for 'status' view, it's a special page
 
     }
 
