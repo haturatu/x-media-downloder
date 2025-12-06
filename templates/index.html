@@ -137,6 +137,58 @@
     .modal-nav.next { right: 0.5rem; }
     .modal-close { position: absolute; top: 0.5rem; right: 0.5rem; color: white; font-size: 1.5rem; cursor: pointer; background-color: rgba(0,0,0,0.6); width: 44px; height: 44px; border-radius: 50%; display: flex; align-items: center; justify-content: center; transition: background-color 0.2s; }
     .modal-close:hover { background-color: rgba(0,0,0,0.8); }
+
+    /* Autotag Menu Modal */
+    .autotag-menu-modal {
+        position: fixed;
+        z-index: 1500;
+        left: 0;
+        top: 0;
+        width: 100%;
+        height: 100%;
+        background-color: rgba(0,0,0,0.6);
+        display: none; /* Hidden by default */
+        justify-content: center;
+        align-items: center;
+    }
+    .autotag-menu-modal.visible {
+        display: flex;
+    }
+    .autotag-menu-content {
+        background-color: var(--surface-color);
+        border: 1px solid var(--border-color);
+        border-radius: 6px;
+        width: 90%;
+        max-width: 450px;
+        box-shadow: 0 5px 15px rgba(0,0,0,0.5);
+    }
+    .autotag-menu-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 0.75rem 1rem;
+        border-bottom: 1px solid var(--border-color);
+    }
+    .autotag-menu-header h3 { margin: 0; font-size: 1.1rem; }
+    .autotag-menu-close {
+        font-size: 1.5rem;
+        color: var(--text-secondary-color);
+        cursor: pointer;
+        padding: 0 0.5rem;
+    }
+    .autotag-menu-close:hover { color: var(--text-color); }
+    .autotag-menu-body { padding: 1rem; }
+    .autotag-menu-body button { width: 100%; margin-bottom: 0.5rem; }
+    .autotag-menu-body hr { border: none; border-top: 1px solid var(--border-color); margin: 1rem 0; }
+    .force-retag-section p { font-size: 0.9rem; color: var(--text-secondary-color); margin-top: 0; }
+    .force-retag-section label { display: block; margin-bottom: 0.75rem; font-size: 0.9rem; cursor: pointer; user-select: none; }
+    .force-retag-section input { margin-right: 0.5rem; }
+    .force-retag-section button:disabled {
+        background-color: #444;
+        border-color: #555;
+        cursor: not-allowed;
+        opacity: 0.6;
+    }
 </style>
 </head>
 <body>
@@ -177,12 +229,32 @@
                 <form id="tagSearchForm" class="tag-search-form">
                     <input type="search" id="tagSearchInput" placeholder="Search by tags (e.g. 1girl, blue_hair)">
                 </form>
-                <button id="autotagReloadBtn" class="header-btn">Autotagger Reload</button>
+                <button id="autotagBtn" class="header-btn">Autotagger</button>
             </div>
         </header>
         <div id="status"></div>
         <div id="galleryWrapper" class="gallery-wrapper"></div>
     </main>
+</div>
+
+<div id="autotagMenu" class="autotag-menu-modal">
+    <div class="autotag-menu-content">
+        <div class="autotag-menu-header">
+            <h3>Autotagger Options</h3>
+            <span id="autotagMenuClose" class="autotag-menu-close">&times;</span>
+        </div>
+        <div class="autotag-menu-body">
+            <button id="tagUntaggedBtn" class="header-btn">Tag Untagged Images</button>
+            <hr>
+            <div class="force-retag-section">
+                <p><strong>Danger Zone:</strong> Clear all existing tags and re-tag every image from scratch.</p>
+                <label>
+                    <input type="checkbox" id="forceRetagConfirm"> I understand this is slow and will delete all tags.
+                </label>
+                <button id="forceRetagBtn" class="header-btn" disabled>Force Re-tag All Images</button>
+            </div>
+        </div>
+    </div>
 </div>
 
 <div id="modalOverlay" class="modal-overlay">
@@ -191,375 +263,867 @@
         <button id="modalPrev" class="modal-nav prev">&#10094;</button>
         <img id="modalImg" src="">
         <div id="modalTags" class="modal-tags"></div>
+        <button id="modalRetagBtn" class="header-btn" style="display: none; margin-top: 10px;">Generate Tags</button>
         <button id="modalNext" class="modal-nav next">&#10095;</button>
     </div>
 </div>
 
 <script>
+
     const G_ELEMENTS = {
+
         // Header
+
         homeBtn: document.getElementById('homeBtn'),
+
         tagSearchForm: document.getElementById('tagSearchForm'),
+
         tagSearchInput: document.getElementById('tagSearchInput'),
-        autotagReloadBtn: document.getElementById('autotagReloadBtn'),
+
+        autotagBtn: document.getElementById('autotagBtn'),
+
         // Sidebar
+
         showUsersBtn: document.getElementById('showUsersBtn'),
+
         showTagsBtn: document.getElementById('showTagsBtn'),
+
         usersPane: document.getElementById('usersPane'),
+
         tagsPane: document.getElementById('tagsPane'),
+
         navList: document.getElementById('navList'),
+
         tagList: document.getElementById('tagList'),
+
         userSearch: document.getElementById('userSearch'),
+
         tagSearch: document.getElementById('tagSearch'),
+
         // Main
+
         galleryWrapper: document.getElementById('galleryWrapper'),
+
         status: document.getElementById('status'),
+
         // Actions
+
         downloadBtn: document.getElementById('downloadBtn'),
+
         tweetUrls: document.getElementById('tweetUrls'),
-        // Modal
+
+        // Image Modal
+
         modal: {
+
             overlay: document.getElementById('modalOverlay'),
+
             img: document.getElementById('modalImg'),
+
             tags: document.getElementById('modalTags'),
+
             close: document.getElementById('modalClose'),
+
             prev: document.getElementById('modalPrev'),
+
             next: document.getElementById('modalNext'),
+
+            retagBtn: document.getElementById('modalRetagBtn'),
+
+        },
+
+        // Autotagger Menu
+
+        autotagMenu: {
+
+            modal: document.getElementById('autotagMenu'),
+
+            close: document.getElementById('autotagMenuClose'),
+
+            tagUntaggedBtn: document.getElementById('tagUntaggedBtn'),
+
+            forceRetagConfirm: document.getElementById('forceRetagConfirm'),
+
+            forceRetagBtn: document.getElementById('forceRetagBtn'),
+
         }
+
     };
+
+
 
     let G_STATE = {
+
         activeView: 'home', // 'home', 'user', 'tag'
+
         activeUser: null,
+
         activeTags: [],
+
         gallery: [],
+
         galleryIndex: 0,
+
         allUsers: [],
+
         allTags: [],
+
     };
 
+
+
     document.addEventListener('DOMContentLoaded', () => {
+
         initNav();
+
         initEventListeners();
+
         loadLatestImages();
+
     });
 
+
+
     function initNav() {
+
         loadUsers();
+
         loadAllTags();
+
     }
+
+
 
     function initEventListeners() {
+
         G_ELEMENTS.homeBtn.addEventListener('click', (e) => { e.preventDefault(); loadLatestImages(); });
 
+
+
         // Sidebar Tabs
+
         G_ELEMENTS.showUsersBtn.addEventListener('click', () => switchTab('users'));
+
         G_ELEMENTS.showTagsBtn.addEventListener('click', () => switchTab('tags'));
 
+
+
         // Search
+
         G_ELEMENTS.userSearch.addEventListener('input', () => renderNavList());
+
         G_ELEMENTS.tagSearch.addEventListener('input', () => renderTagList());
+
         G_ELEMENTS.tagSearchForm.addEventListener('submit', handleTagSearch);
 
+
+
         // Actions
+
         G_ELEMENTS.downloadBtn.addEventListener('click', handleDownload);
-        G_ELEMENTS.autotagReloadBtn.addEventListener('click', handleAutotagReload);
+
+        G_ELEMENTS.autotagBtn.addEventListener('click', () => { G_ELEMENTS.autotagMenu.modal.classList.add('visible'); });
+
         
-        // Modal
-        const { overlay, close, prev, next, img } = G_ELEMENTS.modal;
-        overlay.addEventListener('click', e => (e.target === overlay || e.target === G_ELEMENTS.modal.tags) && closeModal());
-        close.addEventListener('click', closeModal);
-        prev.addEventListener('click', () => changeModalImage(-1));
-        next.addEventListener('click', () => changeModalImage(1));
-        img.addEventListener('click', () => changeModalImage(1));
-        
-        // Keyboard shortcuts
-        document.addEventListener('keydown', e => {
-            if (e.ctrlKey && e.key === 'Enter') {
-                e.preventDefault();
-                G_ELEMENTS.downloadBtn.click();
-                return;
-            }
-            if (!overlay.classList.contains('visible')) return;
-            if (e.key === 'ArrowRight') changeModalImage(1);
-            if (e.key === 'ArrowLeft') changeModalImage(-1);
-            if (e.key === 'Escape') closeModal();
+
+        // Image Modal
+
+        const { modal: imgModal, autotagMenu } = G_ELEMENTS;
+
+        imgModal.overlay.addEventListener('click', e => (e.target === imgModal.overlay || e.target === imgModal.tags) && closeModal());
+
+        imgModal.close.addEventListener('click', closeModal);
+
+        imgModal.prev.addEventListener('click', () => changeModalImage(-1));
+
+        imgModal.next.addEventListener('click', () => changeModalImage(1));
+
+        imgModal.img.addEventListener('click', () => changeModalImage(1));
+
+        imgModal.retagBtn.addEventListener('click', handleRetag);
+
+
+
+        // Autotagger Menu
+
+        autotagMenu.close.addEventListener('click', () => { autotagMenu.modal.classList.remove('visible'); });
+
+        autotagMenu.modal.addEventListener('click', (e) => { if (e.target === autotagMenu.modal) { autotagMenu.modal.classList.remove('visible'); } });
+
+        autotagMenu.tagUntaggedBtn.addEventListener('click', handleTagUntagged);
+
+        autotagMenu.forceRetagBtn.addEventListener('click', handleForceRetag);
+
+        autotagMenu.forceRetagConfirm.addEventListener('change', () => {
+
+            autotagMenu.forceRetagBtn.disabled = !autotagMenu.forceRetagConfirm.checked;
+
         });
+
+        
+
+        // Keyboard shortcuts
+
+        document.addEventListener('keydown', e => {
+
+            if (e.ctrlKey && e.key === 'Enter') {
+
+                e.preventDefault();
+
+                G_ELEMENTS.downloadBtn.click();
+
+                return;
+
+            }
+
+            if (imgModal.overlay.classList.contains('visible')) {
+
+                if (e.key === 'ArrowRight') changeModalImage(1);
+
+                if (e.key === 'ArrowLeft') changeModalImage(-1);
+
+                if (e.key === 'Escape') closeModal();
+
+            } else if (autotagMenu.modal.classList.contains('visible')) {
+
+                if (e.key === 'Escape') autotagMenu.modal.classList.remove('visible');
+
+            }
+
+        });
+
     }
+
+
 
     function switchTab(tabName) {
+
         if (tabName === 'users') {
+
             G_ELEMENTS.usersPane.classList.add('active');
+
             G_ELEMENTS.tagsPane.classList.remove('active');
+
             G_ELEMENTS.showUsersBtn.classList.add('active');
+
             G_ELEMENTS.showTagsBtn.classList.remove('active');
+
         } else {
+
             G_ELEMENTS.usersPane.classList.remove('active');
+
             G_ELEMENTS.tagsPane.classList.add('active');
+
             G_ELEMENTS.showUsersBtn.classList.remove('active');
+
             G_ELEMENTS.showTagsBtn.classList.add('active');
+
         }
+
     }
+
+
 
     async function fetchAPI(url, options = {}) {
+
         try {
+
             const response = await fetch(url, options);
+
             if (!response.ok) {
+
                 const errorData = await response.json();
+
                 throw new Error(errorData.message || `HTTP error! status: ${response.status}`);
+
             }
+
             return await response.json();
+
         } catch (error) {
+
             console.error(`Fetch error for ${url}:`, error);
+
             G_ELEMENTS.status.textContent = `Error: ${error.message}`;
+
             G_ELEMENTS.galleryWrapper.innerHTML = `<p class="placeholder">Failed to load data. Please try again.</p>`;
+
             return null;
+
         }
+
     }
+
+
 
     async function loadLatestImages() {
+
         setActiveNav({ view: 'home' });
+
         renderLoader();
+
         const data = await fetchAPI('/api/images?sort=latest&limit=100');
+
         if (data) {
+
             const title = 'Latest Posts';
+
             if (data.images.length === 0) {
+
                 renderPlaceholder(title, 'No images found. Start by downloading some!');
+
                 return;
+
             }
+
             renderImageGrid(title, data.images);
+
         }
+
     }
+
+
 
     async function loadImagesByTags(tags) {
+
         const tagString = tags.join(',');
+
         setActiveNav({ view: 'tag', tags });
+
         renderLoader();
+
         const data = await fetchAPI(`/api/images?tags=${encodeURIComponent(tagString)}&limit=500`);
+
         if (data) {
+
             const title = `Tagged with: ${tagString}`;
+
             if (data.images.length === 0) {
+
                 renderPlaceholder(title, 'No images found with these tags.');
+
                 return;
+
             }
+
             renderImageGrid(title, data.images);
+
         }
+
     }
+
+
 
     async function loadUserImages(username) {
+
         setActiveNav({ view: 'user', user: username });
+
         renderLoader();
+
         const data = await fetchAPI(`/api/users/${username}/tweets`);
+
         if (data && data.tweets) {
+
             const allImages = data.tweets.flatMap(tweet => tweet.images);
+
             renderImageGrid(`@${username}`, allImages);
+
         }
+
     }
+
+
 
     async function loadUsers() {
+
         const data = await fetchAPI(`/api/users`);
+
         if (data) {
+
             G_STATE.allUsers = data.users;
+
             renderNavList();
+
         }
+
     }
+
+
 
     async function loadAllTags() {
+
         const data = await fetchAPI('/api/tags');
+
         if (data) {
+
             G_STATE.allTags = data.tags;
+
             renderTagList();
+
         }
+
     }
+
+
 
     async function handleDownload() {
+
         const urls = G_ELEMENTS.tweetUrls.value.trim().split(/[\s,]+/).filter(Boolean);
+
         if (!urls.length) { alert("Please enter at least one URL."); return; }
+
         
+
         G_ELEMENTS.downloadBtn.disabled = true;
+
         G_ELEMENTS.status.textContent = "Sending to background queue...";
 
+
+
         try {
+
             const data = await fetchAPI('/api/download', { 
+
                 method: 'POST', 
+
                 headers: {'Content-Type': 'application/json'},
+
                 body: JSON.stringify({ urls })
+
             });
-            if (!data) {
-                // fetchAPI already handles setting the status on error
-                return;
-            }
+
+            if (!data) { return; }
+
+
 
             G_ELEMENTS.status.textContent = data.message || "Tasks queued successfully.";
+
             G_ELEMENTS.tweetUrls.value = '';
+
             
-            // Refresh the UI after a short delay to give workers time to start.
+
             setTimeout(() => {
+
                 initNav();
-                if (G_STATE.activeView === 'home') {
-                    loadLatestImages();
-                }
+
+                if (G_STATE.activeView === 'home') loadLatestImages();
+
             }, 3000);
 
+
+
         } catch (error) {
+
             G_ELEMENTS.status.textContent = `Error: ${error.message}`;
+
         } finally {
+
             G_ELEMENTS.downloadBtn.disabled = false;
+
         }
+
     }
 
-    async function handleAutotagReload() {
-        if (!confirm('This will clear all existing tags and re-tag every image. This can take a long time. Are you sure?')) return;
+    
 
-        G_ELEMENTS.autotagReloadBtn.disabled = true;
-        G_ELEMENTS.status.textContent = "Starting autotagger reload... Existing tags will be cleared.";
+    async function handleTagUntagged() {
+
+        G_ELEMENTS.status.textContent = "Starting to tag untagged images in the background...";
+
+        const data = await fetchAPI('/api/autotag/untagged', { method: 'POST' });
+
+        if (data) {
+
+            G_ELEMENTS.status.textContent = data.message;
+
+        }
+
+        G_ELEMENTS.autotagMenu.modal.classList.remove('visible');
+
+    }
+
+
+
+    async function handleForceRetag() {
+
+        G_ELEMENTS.status.textContent = "Starting to force re-tag all images. This will take a while...";
 
         const data = await fetchAPI('/api/autotag/reload', { method: 'POST' });
+
         if (data) {
+
             G_ELEMENTS.status.textContent = data.message;
-            setTimeout(loadAllTags, 5000); // Refresh tags after 5s
-        } else {
-             G_ELEMENTS.status.textContent = "Failed to start autotagger reload.";
+
         }
-        G_ELEMENTS.autotagReloadBtn.disabled = false;
+
+        // Reset and close menu
+
+        G_ELEMENTS.autotagMenu.forceRetagConfirm.checked = false;
+
+        G_ELEMENTS.autotagMenu.forceRetagBtn.disabled = true;
+
+        G_ELEMENTS.autotagMenu.modal.classList.remove('visible');
+
     }
+
+
 
     function handleTagSearch(event) {
+
         event.preventDefault();
+
         const query = G_ELEMENTS.tagSearchInput.value.trim();
+
         if (query) {
+
             const tags = query.split(',').map(t => t.trim().replace(/ /g, '_')).filter(Boolean);
+
             if (tags.length > 0) {
+
                 loadImagesByTags(tags);
+
             }
+
         }
+
     }
+
+
 
     function renderNavList() {
+
         G_ELEMENTS.navList.innerHTML = '';
+
         const query = G_ELEMENTS.userSearch.value.toLowerCase();
+
         const filteredUsers = (G_STATE.allUsers || []).filter(u => u.username.toLowerCase().includes(query));
 
+
+
         filteredUsers.forEach(user => {
+
             const li = document.createElement('li');
+
             li.className = 'user-item-link';
+
             li.dataset.userId = user.username;
+
             li.innerHTML = `<a href="#">${user.username}</a><span class="item-count">${user.tweet_count}</span>`;
+
             li.onclick = (e) => { 
+
                 e.preventDefault();
+
                 loadUserImages(user.username);
+
             };
+
             G_ELEMENTS.navList.appendChild(li);
+
         });
+
         setActiveNav(G_STATE);
+
     }
+
+
 
     function renderTagList() {
+
         G_ELEMENTS.tagList.innerHTML = '';
+
         const query = G_ELEMENTS.tagSearch.value.toLowerCase();
+
         const filteredTags = (G_STATE.allTags || []).filter(t => t.tag.includes(query));
+
         
+
         filteredTags.forEach(tagInfo => {
+
             const li = document.createElement('li');
+
             li.className = 'tag-item';
+
             li.dataset.tag = tagInfo.tag;
+
             li.innerHTML = `<a href="#">${tagInfo.tag}</a><span class="item-count">${tagInfo.count}</span>`;
+
             li.onclick = (e) => { 
+
                 e.preventDefault();
+
                 loadImagesByTags([tagInfo.tag]);
+
             };
+
             G_ELEMENTS.tagList.appendChild(li);
+
         });
+
         setActiveNav(G_STATE);
+
     }
+
     
+
     function renderImageGrid(title, images) {
+
         G_STATE.gallery = images;
+
         G_ELEMENTS.galleryWrapper.innerHTML = '';
 
+
+
         if (title) {
+
             const gridTitle = document.createElement('h3');
+
             gridTitle.className = 'gallery-title';
+
             gridTitle.textContent = title;
+
             G_ELEMENTS.galleryWrapper.appendChild(gridTitle);
+
         }
+
         
+
         const grid = document.createElement('div');
+
         grid.className = 'image-grid';
 
+
+
         images.forEach((img, index) => {
+
             const container = document.createElement('div');
+
             container.className = 'img-container';
+
             const imageEl = document.createElement('img');
+
             imageEl.src = `/images/${img.path}`;
+
             imageEl.loading = 'lazy';
+
             imageEl.onclick = () => showModal(index);
+
             
+
             const tagsOverlay = document.createElement('div');
+
             tagsOverlay.className = 'tags-overlay';
-            tagsOverlay.textContent = img.tags.slice(0, 5).map(t => t.tag).join(', ');
+
+            tagsOverlay.textContent = (img.tags || []).slice(0, 5).map(t => t.tag).join(', ');
+
+
 
             container.appendChild(imageEl);
+
             container.appendChild(tagsOverlay);
+
             grid.appendChild(container);
+
         });
+
         G_ELEMENTS.galleryWrapper.appendChild(grid);
-    }
-    
-    function renderLoader() {
-        G_ELEMENTS.galleryWrapper.innerHTML = '<div class="loader"></div>';
+
     }
 
-    function renderPlaceholder(title, message) {
-        let html = '';
-        if (title) html += `<h3 class="gallery-title">${title}</h3>`;
-        html += `<p class="placeholder">${message}</p>`;
-        G_ELEMENTS.galleryWrapper.innerHTML = html;
-    }
     
+
+    function renderLoader() {
+
+        G_ELEMENTS.galleryWrapper.innerHTML = '<div class="loader"></div>';
+
+    }
+
+
+
+    function renderPlaceholder(title, message) {
+
+        let html = '';
+
+        if (title) html += `<h3 class="gallery-title">${title}</h3>`;
+
+        html += `<p class="placeholder">${message}</p>`;
+
+        G_ELEMENTS.galleryWrapper.innerHTML = html;
+
+    }
+
+    
+
     function setActiveNav({ view, user = null, tags = [] }) {
+
         G_STATE.activeView = view;
+
         G_STATE.activeUser = user;
+
         G_STATE.activeTags = tags;
+
+
 
         document.querySelectorAll('.nav-list .active, .tag-list .active, .header-link.active').forEach(el => el.classList.remove('active'));
 
+
+
         if (view === 'home') {
+
             G_ELEMENTS.homeBtn.classList.add('active');
+
         } else if (view === 'user') {
+
             const userItem = document.querySelector(`.nav-list .user-item-link[data-user-id='${user}']`);
+
             userItem?.classList.add('active');
+
         } else if (view === 'tag') {
+
             tags.forEach(tag => {
+
                 document.querySelector(`.tag-list .tag-item[data-tag='${tag}']`)?.classList.add('active');
+
             });
+
         }
+
     }
+
+
 
     function showModal(index) {
+
         G_STATE.galleryIndex = index;
+
         updateModalImage();
+
         G_ELEMENTS.modal.overlay.classList.add('visible');
+
     }
+
+
 
     function closeModal() {
+
         G_ELEMENTS.modal.overlay.classList.remove('visible');
+
     }
+
+
 
     function updateModalImage() {
+
         if (G_STATE.gallery.length > 0) {
+
             const image = G_STATE.gallery[G_STATE.galleryIndex];
+
             G_ELEMENTS.modal.img.src = `/images/${image.path}`;
-            G_ELEMENTS.modal.tags.textContent = image.tags.map(t => t.tag).join(', ');
+
+            
+
+            const tags = image.tags || [];
+
+            G_ELEMENTS.modal.tags.textContent = tags.map(t => t.tag).join(', ');
+
+
+
+            if (tags.length === 0) {
+
+                G_ELEMENTS.modal.retagBtn.style.display = 'block';
+
+            } else {
+
+                G_ELEMENTS.modal.retagBtn.style.display = 'none';
+
+            }
+
         }
+
     }
 
+
+
     function changeModalImage(direction) {
+
         const newIndex = G_STATE.galleryIndex + direction;
+
         const len = G_STATE.gallery.length;
+
         G_STATE.galleryIndex = (newIndex % len + len) % len;
+
         updateModalImage();
+
     }
+
+
+
+    async function handleRetag() {
+
+        const image = G_STATE.gallery[G_STATE.galleryIndex];
+
+        if (!image) return;
+
+
+
+        const retagBtn = G_ELEMENTS.modal.retagBtn;
+
+        retagBtn.disabled = true;
+
+        retagBtn.textContent = 'Tagging...';
+
+
+
+        try {
+
+            const data = await fetchAPI('/api/images/retag', {
+
+                method: 'POST',
+
+                headers: {'Content-Type': 'application/json'},
+
+                body: JSON.stringify({ filepath: image.path })
+
+            });
+
+
+
+            if (data && data.success) {
+
+                G_STATE.gallery[G_STATE.galleryIndex].tags = data.tags;
+
+                updateModalImage();
+
+                if (data.tags.length > 0) {
+
+                    loadAllTags();
+
+                }
+
+            } else {
+
+                G_ELEMENTS.modal.tags.textContent = (data && data.message) || "Tagging failed.";
+
+            }
+
+
+
+        } catch (error) {
+
+            G_ELEMENTS.modal.tags.textContent = `Error: ${error.message}`;
+
+        } finally {
+
+            retagBtn.disabled = false;
+
+            retagBtn.textContent = 'Generate Tags';
+
+        }
+
+    }
+
 </script>
+
 </body>
+
 </html>

@@ -297,11 +297,17 @@ def get_all_tags_api():
     return jsonify({"tags": tags})
 
 def _autotag_all_task():
-    """The actual task of iterating and tagging all unprocessed files in parallel."""
-    print("Starting background task: autotag all unprocessed files.")
+    """The actual task of clearing the DB and re-tagging EVERYTHING."""
+    print("Starting background task: FORCE AUTOTAG ALL IMAGES.")
     try:
         with app.app_context():
-            unprocessed_files = []
+            # 1. Clear all existing tag and processing data
+            print("Clearing all existing tags and processed image history...")
+            database.delete_all_tags()
+            database.clear_all_processed_images()
+            print("Database cleared.")
+
+            all_files_to_process = []
             for root, _, files in os.walk(UPLOAD_FOLDER):
                 for file in files:
                     if file.lower().endswith(('.jpg', '.jpeg', '.png', '.webp', '.gif')):
@@ -309,27 +315,69 @@ def _autotag_all_task():
                         try:
                             with open(filepath, 'rb') as f:
                                 image_hash = hashlib.md5(f.read()).hexdigest()
-                            if not database.is_image_processed(image_hash):
-                                relative_path = os.path.relpath(filepath, UPLOAD_FOLDER).replace("\\\\", "/")
-                                unprocessed_files.append((filepath, relative_path, image_hash))
+                            relative_path = os.path.relpath(filepath, UPLOAD_FOLDER).replace("\\\\", "/")
+                            all_files_to_process.append((filepath, relative_path, image_hash))
                         except Exception as e:
                             print(f"Error processing file {filepath} for hashing: {e}")
             
-            if not unprocessed_files:
-                print("No new images to tag.")
+            if not all_files_to_process:
+                print("No images found to tag.")
                 return
 
-            print(f"Found {len(unprocessed_files)} new images to tag.")
+            print(f"Found {len(all_files_to_process)} images to force re-tag.")
 
             def autotag_wrapper(args):
-                return autotag_file(*args)
+                filepath, relative_path, image_hash = args
+                autotag_file(filepath, relative_path, image_hash)
+                database.mark_image_as_processed(image_hash)
 
-            list(executor.map(autotag_wrapper, unprocessed_files))
+            list(executor.map(autotag_wrapper, all_files_to_process))
             
     except Exception as e:
-        print(f"An error occurred during the autotagging task: {e}")
+        print(f"An error occurred during the force autotagging task: {e}")
     finally:
-        print("Finished background task: autotag all files.")
+        print("Finished background task: force autotag all files.")
+
+def _autotag_untagged_task():
+    """The task of tagging only files that have no tags."""
+    print("Starting background task: autotag untagged files.")
+    try:
+        with app.app_context():
+            tagged_files = database.get_all_image_filepaths_from_db()
+            untagged_files_to_process = []
+
+            for root, _, files in os.walk(UPLOAD_FOLDER):
+                for file in files:
+                    if file.lower().endswith(('.jpg', '.jpeg', '.png', '.webp', '.gif')):
+                        filepath = os.path.join(root, file)
+                        relative_path = os.path.relpath(filepath, UPLOAD_FOLDER).replace("\\\\", "/")
+                        
+                        if relative_path not in tagged_files:
+                            try:
+                                with open(filepath, 'rb') as f:
+                                    image_hash = hashlib.md5(f.read()).hexdigest()
+                                if not database.is_image_processed(image_hash):
+                                    untagged_files_to_process.append((filepath, relative_path, image_hash))
+                            except Exception as e:
+                                print(f"Error processing file {filepath} for hashing: {e}")
+            
+            if not untagged_files_to_process:
+                print("No new untagged images to process.")
+                return
+
+            print(f"Found {len(untagged_files_to_process)} untagged images to process.")
+
+            def autotag_wrapper(args):
+                filepath, relative_path, image_hash = args
+                autotag_file(filepath, relative_path, image_hash)
+                database.mark_image_as_processed(image_hash)
+
+            list(executor.map(autotag_wrapper, untagged_files_to_process))
+
+    except Exception as e:
+        print(f"An error occurred during the untagged autotagging task: {e}")
+    finally:
+        print("Finished background task: autotag untagged files.")
 
 @app.route('/api/autotag/reload', methods=['POST'])
 def autotag_reload_api():
@@ -338,4 +386,49 @@ def autotag_reload_api():
     
     executor.submit(_autotag_all_task)
     
-    return jsonify({"success": True, "message": "Autotagging for new images started in the background."})
+    return jsonify({"success": True, "message": "Started force re-tagging for ALL images in the background."})
+
+@app.route('/api/autotag/untagged', methods=['POST'])
+def autotag_untagged_api():
+    if not AUTOTAGGER_ENABLED or not AUTOTAGGER_URL:
+        return jsonify({"success": False, "message": "Autotagger is not configured."}), 400
+    
+    executor.submit(_autotag_untagged_task)
+    
+    return jsonify({"success": True, "message": "Autotagging for untagged images started in the background."})
+
+
+@app.route('/api/images/retag', methods=['POST'])
+def retag_image_api():
+    filepath = request.get_json().get('filepath')
+    if not filepath:
+        return jsonify({"success": False, "message": "filepath is required"}), 400
+
+    # Check for existing tags first
+    existing_tags = database.get_tags_for_files([filepath]).get(filepath, [])
+    if existing_tags:
+        return jsonify({
+            "success": True,
+            "message": "Image already has tags.",
+            "tags": existing_tags
+        })
+
+    full_path = os.path.join(UPLOAD_FOLDER, filepath)
+    if not os.path.exists(full_path):
+        return jsonify({"success": False, "message": "File not found"}), 404
+
+    try:
+        with open(full_path, 'rb') as f:
+            image_content = f.read()
+        image_hash = hashlib.md5(image_content).hexdigest()
+    except IOError as e:
+        return jsonify({"success": False, "message": f"Could not read file: {e}"}), 500
+
+    # Run autotagging since no tags exist
+    autotag_file(full_path, filepath, image_hash)
+
+    # Fetch the new tags
+    new_tags_map = database.get_tags_for_files([filepath])
+    new_tags = new_tags_map.get(filepath, [])
+
+    return jsonify({"success": True, "tags": new_tags})

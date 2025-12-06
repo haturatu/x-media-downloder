@@ -129,3 +129,36 @@ def find_files_by_tags(tags):
     conn.close()
     
     return [row['filepath'] for row in rows]
+
+def delete_all_tags():
+    """Deletes all tags from the image_tags table."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM image_tags")
+    conn.commit()
+    conn.close()
+
+def clear_all_processed_images():
+    """Clears the processed_images table."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM processed_images")
+    conn.commit()
+    conn.close()
+
+def get_all_image_filepaths_from_db():
+    """Retrieves all unique filepaths from the image_tags table."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT DISTINCT filepath FROM image_tags")
+    rows = cursor.fetchall()
+    conn.close()
+    return {row['filepath'] for row in rows}
+
+def delete_tags_for_file(filepath):
+    """Deletes all tags associated with a specific file."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM image_tags WHERE filepath = ?", (filepath,))
+    conn.commit()
+    conn.close()
