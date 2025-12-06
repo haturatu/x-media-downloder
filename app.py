@@ -227,7 +227,8 @@ def list_user_tweets(username):
             image_paths = []
             for img_file in sorted(os.listdir(tweet_path)):
                 if img_file.lower().endswith(('.jpg', '.jpeg', '.png', '.webp', '.gif')):
-                    relative_path = f"{username}/{tweet_id}/{img_file}"
+                    full_path = os.path.join(tweet_path, img_file)
+                    relative_path = os.path.relpath(full_path, UPLOAD_FOLDER).replace("\\\\", "/")
                     image_paths.append(relative_path)
                     images_in_tweet.append({"path": relative_path, "tags": []}) # Placeholder for tags
             
