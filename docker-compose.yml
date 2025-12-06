@@ -18,11 +18,14 @@ services:
       - ./tags.db:/app/tags.db
     depends_on:
       - redis
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     environment:
       - FLASK_APP=app.py
       - FLASK_ENV=development
       - CELERY_BROKER_URL=redis://redis:6379/0
       - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - AUTOTAGGER_URL=http://host.docker.internal:5000/evaluate
     mem_limit: "256m"
     cpus: "0.2"
 
@@ -35,8 +38,11 @@ services:
       - ./tags.db:/app/tags.db
     depends_on:
       - redis
+    extra_hosts:
+      - "host.docker.internal:host-gateway" # Linux Dockerでのホストアクセス用
     environment:
       - CELERY_BROKER_URL=redis://redis:6379/0
       - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - AUTOTAGGER_URL=http://host.docker.internal:5000/evaluate
     mem_limit: "256m"
     cpus: "0.2"

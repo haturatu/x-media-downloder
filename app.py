@@ -4,7 +4,7 @@ import json
 import random
 import hashlib
 from urllib.parse import urlparse
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import requests
 from flask import Flask, jsonify, render_template, request, send_from_directory
@@ -309,8 +309,6 @@ def _autotag_all_task(self):
     print("Starting background task: FORCE AUTOTAG ALL IMAGES.")
     try:
         with app.app_context():
-            # 1. Clear all existing tag and processing data
-            print("Clearing all existing tags and processed image history...")
             self.update_state(state='PROGRESS', meta={'current': 0, 'total': 1, 'status': 'Clearing database...'})
             database.delete_all_tags()
             database.clear_all_processed_images()
@@ -331,28 +329,28 @@ def _autotag_all_task(self):
             
             total_files = len(all_files_to_process)
             if total_files == 0:
-                print("No images found to tag.")
                 return {'current': 0, 'total': 0, 'status': 'No images found to process.'}
 
             print(f"Found {total_files} images to force re-tag.")
             self.update_state(state='PROGRESS', meta={'current': 0, 'total': total_files, 'status': 'Starting processing...'})
 
-            def autotag_wrapper(args_with_index):
-                index, args = args_with_index
+            def autotag_and_mark(args):
                 filepath, relative_path, image_hash = args
                 autotag_file(filepath, relative_path, image_hash)
                 database.mark_image_as_processed(image_hash)
-                self.update_state(state='PROGRESS', meta={'current': index + 1, 'total': total_files, 'status': f'Processing {relative_path}'})
+                return relative_path
 
-            list(executor.map(autotag_wrapper, enumerate(all_files_to_process)))
+            futures = {executor.submit(autotag_and_mark, args): args for args in all_files_to_process}
+            for i, future in enumerate(as_completed(futures)):
+                relative_path = future.result()
+                self.update_state(state='PROGRESS', meta={'current': i + 1, 'total': total_files, 'status': f'Processing {relative_path}'})
+
             return {'current': total_files, 'total': total_files, 'status': 'Complete!'}
             
     except Exception as e:
         print(f"An error occurred during the force autotagging task: {e}")
         self.update_state(state='FAILURE', meta={'exc_type': type(e).__name__, 'exc_message': str(e)})
         raise e
-    finally:
-        print("Finished background task: force autotag all files.")
 
 @celery.task(bind=True)
 def _autotag_untagged_task(self):
@@ -369,7 +367,6 @@ def _autotag_untagged_task(self):
                     if file.lower().endswith(('.jpg', '.jpeg', '.png', '.webp', '.gif')):
                         filepath = os.path.join(root, file)
                         relative_path = os.path.relpath(filepath, UPLOAD_FOLDER).replace("\\\\", "/")
-                        
                         if relative_path not in tagged_files:
                             try:
                                 with open(filepath, 'rb') as f:
@@ -380,29 +377,28 @@ def _autotag_untagged_task(self):
             
             total_files = len(untagged_files_to_process)
             if total_files == 0:
-                print("No new untagged images to process.")
                 return {'current': 0, 'total': 0, 'status': 'No new untagged images to process.'}
-
 
             print(f"Found {total_files} untagged images to process.")
             self.update_state(state='PROGRESS', meta={'current': 0, 'total': total_files, 'status': 'Starting processing...'})
-
-            def autotag_wrapper(args_with_index):
-                index, args = args_with_index
+            
+            def autotag_and_mark(args):
                 filepath, relative_path, image_hash = args
                 autotag_file(filepath, relative_path, image_hash)
                 database.mark_image_as_processed(image_hash)
-                self.update_state(state='PROGRESS', meta={'current': index + 1, 'total': total_files, 'status': f'Processing {relative_path}'})
+                return relative_path
 
-            list(executor.map(autotag_wrapper, enumerate(untagged_files_to_process)))
+            futures = {executor.submit(autotag_and_mark, args): args for args in untagged_files_to_process}
+            for i, future in enumerate(as_completed(futures)):
+                relative_path = future.result()
+                self.update_state(state='PROGRESS', meta={'current': i + 1, 'total': total_files, 'status': f'Processing {relative_path}'})
+
             return {'current': total_files, 'total': total_files, 'status': 'Complete!'}
 
     except Exception as e:
         print(f"An error occurred during the untagged autotagging task: {e}")
         self.update_state(state='FAILURE', meta={'exc_type': type(e).__name__, 'exc_message': str(e)})
         raise e
-    finally:
-        print("Finished background task: autotag untagged files.")
 
 @app.route('/api/autotag/reload', methods=['POST'])
 def autotag_reload_api():
@@ -452,9 +448,12 @@ def autotag_status_api():
         }
     else: # FAILURE or other states
         info = task.info or {}
+        status_message = str(task.info)
+        if isinstance(info, dict):
+            status_message = info.get('exc_message', str(info))
         response = {
             'state': task.state,
-            'status': f"Task failed: {info.get('exc_message', str(task.info))}"
+            'status': f"Task failed: {status_message}"
         }
         
     return jsonify(response)
