@@ -34,7 +34,7 @@ services:
       - CELERY_RESULT_BACKEND=redis://redis:6379/0
       - AUTOTAGGER_URL=http://autotagger:5000/evaluate
     healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://localhost:8888 || exit 1"]
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8888 --output /dev/null || exit 1"]
       interval: 1m30s
       timeout: 10s
       retries: 3
@@ -81,7 +81,7 @@ services:
       - default
       - autotagger-service
     healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://localhost:5000 || exit 1"]
+      test: ["CMD-SHELL", "curl -fsS http://localhost:5000 --output /dev/null || exit 1"]
       interval: 1m30s
       timeout: 10s
       retries: 3
