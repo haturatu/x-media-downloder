@@ -10,6 +10,11 @@ services:
     restart: always
     mem_limit: "512m"
     cpus: "0.5"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5m
+      timeout: 30s
+      retries: 30
 
   web:
     build: .
@@ -28,6 +33,11 @@ services:
       - CELERY_BROKER_URL=redis://redis:6379/0
       - CELERY_RESULT_BACKEND=redis://redis:6379/0
       - AUTOTAGGER_URL=http://autotagger:5000/evaluate
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8888"]
+      interval: 1m30s
+      timeout: 10s
+      retries: 3
     networks:
       - default
       - autotagger-service
@@ -52,6 +62,11 @@ services:
       - autotagger-service
     mem_limit: "256m"
     cpus: "0.2"
+    healthcheck:
+      test: ["CMD", "celery", "-A", "app.celery", "inspect", "ping"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
 
   autotagger:
     build: ../autotagger
@@ -65,3 +80,9 @@ services:
     networks:
       - default
       - autotagger-service
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/evaluate"]
+      interval: 1m30s
+      timeout: 10s
+      retries: 3
+
