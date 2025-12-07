@@ -712,31 +712,59 @@
 
 
 
-    async function loadImagesByTags(tags) {
+        async function loadImagesByTags(tags) {
 
-        setActiveNav({ view: 'tag', tags });
 
-        renderLoader();
 
-        const data = await fetchAPI(`/api/images?tags=${encodeURIComponent(tagString)}&limit=500`);
+            const tagString = tags.join(',');
 
-        if (data) {
 
-            const title = `Tagged with: ${tagString}`;
 
-            if (data.images.length === 0) {
+            setActiveNav({ view: 'tag', tags });
 
-                renderPlaceholder(title, 'No images found with these tags.');
 
-                return;
+
+            renderLoader();
+
+
+
+            const data = await fetchAPI(`/api/images?tags=${encodeURIComponent(tagString)}&limit=500`);
+
+
+
+            if (data) {
+
+
+
+                const title = `Tagged with: ${tagString}`;
+
+
+
+                if (data.images.length === 0) {
+
+
+
+                    renderPlaceholder(title, 'No images found with these tags.');
+
+
+
+                    return;
+
+
+
+                }
+
+
+
+                renderImageGrid(title, data.images);
+
+
 
             }
 
-            renderImageGrid(title, data.images);
+
 
         }
-
-    }
 
 
 
