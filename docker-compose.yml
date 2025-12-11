@@ -16,34 +16,6 @@ services:
       timeout: 30s
       retries: 30
 
-  web:
-    build: .
-    command: flask run --host=0.0.0.0 --port=8888
-    restart: always
-    ports:
-      - "8888:8888"
-    volumes:
-      - ./downloaded_images:/app/downloaded_images
-      - ./tags.db:/app/tags.db
-    depends_on:
-      - redis
-    environment:
-      - FLASK_APP=app.py
-      - FLASK_ENV=development
-      - CELERY_BROKER_URL=redis://redis:6379/0
-      - CELERY_RESULT_BACKEND=redis://redis:6379/0
-      - AUTOTAGGER_URL=http://autotagger:5000/evaluate
-    healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://localhost:8888 --output /dev/null || exit 1"]
-      interval: 1m30s
-      timeout: 10s
-      retries: 3
-    networks:
-      - default
-      - autotagger-service
-    mem_limit: "256m"
-    cpus: "0.2"
-
   worker:
     build: .
     command: celery -A app.celery worker --loglevel=info
@@ -86,3 +58,25 @@ services:
       timeout: 10s
       retries: 3
 
+  frontend:
+    build: ./x-media-downloder-front
+    command: deno run -A --watch=static/,routes/ dev.ts
+    restart: always
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./x-media-downloder-front:/app
+      - ./downloaded_images:/app/downloaded_images
+      - ./tags.db:/app/tags.db
+    depends_on:
+      - redis
+      - autotagger
+    environment:
+      # API is now served from the app itself
+      - API_BASE_URL=http://localhost:8000
+      # Env vars needed for autotagging features
+      - AUTOTAGGER=true
+      - AUTOTAGGER_URL=http://autotagger:5000/evaluate
+    networks:
+      - default
+      - autotagger-service

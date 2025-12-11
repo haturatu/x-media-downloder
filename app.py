@@ -7,7 +7,7 @@ from urllib.parse import urlparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import requests
-from flask import Flask, jsonify, render_template, request, send_from_directory
+from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
 from dotenv import load_dotenv
 from celery import Celery
@@ -35,16 +35,16 @@ TASK_STORE = {
 
 # --- Celery Configuration ---
 app.config.update(
-    CELERY_BROKER_URL='sqla+sqlite:///celery_broker.db',
-    CELERY_RESULT_BACKEND='db+sqlite:///celery_results.db'
+    broker_url='sqla+sqlite:///celery_broker.db',
+    result_backend='db+sqlite:///celery_results.db'
 )
 
 
 def make_celery(app):
     celery = Celery(
         app.import_name,
-        backend=app.config['CELERY_RESULT_BACKEND'],
-        broker=app.config['CELERY_BROKER_URL']
+        backend=app.config['result_backend'],
+        broker=app.config['broker_url']
     )
     celery.conf.update(app.config)
 
@@ -190,9 +190,6 @@ def download_tweet_media_task(tweet_url):
         return {"url": tweet_url, "success": False, "message": str(e)}
 
 # --- API endpoints ---
-@app.route('/')
-def index():
-    return render_template('index.html')
 
 @app.route('/api/download', methods=['POST'])
 def download_images_api():
@@ -210,23 +207,45 @@ def download_images_api():
 @app.route('/api/users')
 def list_users():
     search_query = request.args.get('q', '').lower()
-    users = []
-    if not os.path.exists(UPLOAD_FOLDER): return jsonify({"users": []})
+    page = int(request.args.get('page', 1))
+    per_page = int(request.args.get('per_page', 100))
+
+    offset = (page - 1) * per_page
+
+    all_users = []
+    if not os.path.exists(UPLOAD_FOLDER): return jsonify({"users": [], "total_pages": 0, "total_items": 0})
     for item in sorted(os.listdir(UPLOAD_FOLDER)):
         if search_query and search_query not in item.lower(): continue
         user_path = os.path.join(UPLOAD_FOLDER, item)
         if os.path.isdir(user_path):
             try:
                 tweet_count = len([d for d in os.listdir(user_path) if os.path.isdir(os.path.join(user_path, d))])
-                if tweet_count > 0: users.append({"username": item, "tweet_count": tweet_count})
+                if tweet_count > 0: all_users.append({"username": item, "tweet_count": tweet_count})
             except OSError: continue
-    return jsonify({"users": users})
+    
+    total_items = len(all_users)
+    users_for_page = all_users[offset:offset + per_page]
+    total_pages = (total_items + per_page - 1) // per_page if total_items > 0 else 0
+
+    return jsonify({
+        "items": users_for_page,
+        "total_items": total_items,
+        "per_page": per_page,
+        "current_page": page,
+        "total_pages": total_pages
+    })
 
 @app.route('/api/users/<username>/tweets')
 def list_user_tweets(username):
+    page = int(request.args.get('page', 1))
+    per_page = int(request.args.get('per_page', 100))
+
+    offset = (page - 1) * per_page
+
     user_path = os.path.join(UPLOAD_FOLDER, username)
     if not os.path.isdir(user_path): return jsonify({"error": "User not found"}), 404
-    tweets = []
+    
+    all_tweets = []
     for tweet_id in sorted(os.listdir(user_path), reverse=True):
         tweet_path = os.path.join(user_path, tweet_id)
         if os.path.isdir(tweet_path):
@@ -243,15 +262,28 @@ def list_user_tweets(username):
                 tags_map = database.get_tags_for_files(image_paths)
                 for img in images_in_tweet:
                     img['tags'] = tags_map.get(img['path'], [])
-                tweets.append({"tweet_id": tweet_id, "images": images_in_tweet})
+                all_tweets.append({"tweet_id": tweet_id, "images": images_in_tweet})
 
-    return jsonify({"tweets": tweets})
+    total_items = len(all_tweets)
+    tweets_for_page = all_tweets[offset:offset + per_page]
+    total_pages = (total_items + per_page - 1) // per_page if total_items > 0 else 0
+
+    return jsonify({
+        "items": tweets_for_page,
+        "total_items": total_items,
+        "per_page": per_page,
+        "current_page": page,
+        "total_pages": total_pages
+    })
 
 @app.route('/api/images')
 def get_images():
     sort_mode = request.args.get('sort', 'latest')
-    limit = int(request.args.get('limit', 100))
+    page = int(request.args.get('page', 1))
+    per_page = int(request.args.get('per_page', 100))
     search_tags_str = request.args.get('tags', '')
+
+    offset = (page - 1) * per_page
 
     all_images = []
     
@@ -266,7 +298,7 @@ def get_images():
                 except OSError: continue
     else:
         if not os.path.exists(UPLOAD_FOLDER):
-            return jsonify({"images": []})
+            return jsonify({"items": [], "total_pages": 0, "total_items": 0})
         for root, _, files in os.walk(UPLOAD_FOLDER):
             for file in files:
                 if file.lower().endswith(('.jpg', '.jpeg', '.png', '.webp', '.gif')):
@@ -278,21 +310,37 @@ def get_images():
                     except OSError: continue
     
     if sort_mode == 'random':
-        sample_size = min(len(all_images), limit)
-        images_to_return = random.sample(all_images, sample_size)
+        # For random, we shuffle the whole list and then take a slice,
+        # but if we want consistent pagination with random, we'd need to seed or fetch all and page.
+        # For simplicity, if random, we return a random sample of `per_page` items from the full list.
+        # This means 'page' parameter effectively gets ignored for 'random' sort.
+        if len(all_images) > per_page:
+            images_for_page = random.sample(all_images, per_page)
+        else:
+            images_for_page = all_images
+        total_items = len(all_images) # Still report total items in DB
     else: # Default to 'latest'
         all_images.sort(key=lambda x: x.get('mtime', 0), reverse=True)
-        images_to_return = all_images[:limit]
+        total_items = len(all_images)
+        images_for_page = all_images[offset:offset + per_page]
 
     # Get tags for the selected images
-    image_paths = [img['path'] for img in images_to_return]
+    image_paths = [img['path'] for img in images_for_page]
     tags_map = database.get_tags_for_files(image_paths)
 
-    for image in images_to_return:
+    for image in images_for_page:
         image.pop('mtime', None)
         image['tags'] = tags_map.get(image['path'], [])
 
-    return jsonify({"images": images_to_return})
+    total_pages = (total_items + per_page - 1) // per_page if total_items > 0 else 0
+
+    return jsonify({
+        "items": images_for_page,
+        "total_items": total_items,
+        "per_page": per_page,
+        "current_page": page,
+        "total_pages": total_pages
+    })
 
 @app.route('/images/<path:filename>')
 def serve_image(filename):
@@ -300,8 +348,24 @@ def serve_image(filename):
 
 @app.route('/api/tags')
 def get_all_tags_api():
-    tags = database.get_all_tags()
-    return jsonify({"tags": tags})
+    page = int(request.args.get('page', 1))
+    per_page = int(request.args.get('per_page', 100))
+
+    offset = (page - 1) * per_page
+
+    all_tags = database.get_all_tags()
+    
+    total_items = len(all_tags)
+    tags_for_page = all_tags[offset:offset + per_page]
+    total_pages = (total_items + per_page - 1) // per_page if total_items > 0 else 0
+
+    return jsonify({
+        "items": tags_for_page,
+        "total_items": total_items,
+        "per_page": per_page,
+        "current_page": page,
+        "total_pages": total_pages
+    })
 
 @celery.task(bind=True)
 def _autotag_all_task(self):
@@ -445,7 +509,7 @@ def autotag_status_api():
     if task.state == 'PENDING':
         response = {'state': task.state, 'status': 'Task is pending...'}
     elif task.state == 'PROGRESS':
-        info = task.info or {}
+        info = task.meta or {}
         response = {
             'state': task.state,
             'current': info.get('current', 0),
@@ -453,7 +517,7 @@ def autotag_status_api():
             'status': info.get('status', '')
         }
     elif task.state == 'SUCCESS':
-        info = task.result or {}
+        info = task.info or {}
         response = {
             'state': task.state,
             'current': info.get('current', 0),

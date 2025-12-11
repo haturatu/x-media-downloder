@@ -6,3 +6,4 @@ celery
 sqlalchemy
 honcho
 redis
+kombu
