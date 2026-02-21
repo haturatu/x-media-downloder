@@ -46,6 +46,8 @@ services:
     volumes:
       - ./downloaded_images:/app/downloaded_images
       - ./tags.db:/data/tags.db
+      - ./tags.db-wal:/data/tags.db-wal
+      - ./tags.db-shm:/data/tags.db-shm
     depends_on:
       - redis
       - autotagger
@@ -80,6 +82,8 @@ services:
     volumes:
       - ./downloaded_images:/app/downloaded_images
       - ./tags.db:/data/tags.db
+      - ./tags.db-wal:/data/tags.db-wal
+      - ./tags.db-shm:/data/tags.db-shm
     depends_on:
       - redis
       - autotagger
@@ -133,6 +137,8 @@ services:
       - ./x-media-downloder-front:/app
       - ./downloaded_images:/app/downloaded_images
       - ./tags.db:/data/tags.db
+      - ./tags.db-wal:/data/tags.db-wal
+      - ./tags.db-shm:/data/tags.db-shm
     depends_on:
       - redis
       - queue-api
