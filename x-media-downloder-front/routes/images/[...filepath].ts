@@ -13,8 +13,16 @@ export const handler = async (
 ): Promise<Response> => {
   try {
     const filepath = ctx.params.filepath;
+    const normalizedRelative = filepath.replace(/^[/\\]+/, "");
+    if (
+      normalizedRelative.length === 0 ||
+      normalizedRelative.startsWith("..")
+    ) {
+      return new Response("Invalid path", { status: 400 });
+    }
+
     const uploadRoot = path.resolve(UPLOAD_FOLDER);
-    const fullPath = path.resolve(path.join(UPLOAD_FOLDER, filepath));
+    const fullPath = path.resolve(uploadRoot, normalizedRelative);
 
     // Basic security: prevent path traversal attacks
     if (!fullPath.startsWith(uploadRoot + path.SEP)) {
@@ -38,7 +46,8 @@ export const handler = async (
     const file = await Deno.open(fullPath, { read: true });
     const readable = file.readable;
 
-    const contentType = getMimeType(filepath) || "application/octet-stream";
+    const contentType = getMimeType(normalizedRelative) ||
+      "application/octet-stream";
 
     return new Response(readable, {
       headers: {
