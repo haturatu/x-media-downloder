@@ -2,17 +2,22 @@
 FROM denoland/deno:latest AS builder
 
 WORKDIR /app
+ENV DENO_DIR=/deno-dir
 
 COPY deno.json .
 COPY fresh.gen.ts .
 COPY . .
 
-RUN --mount=type=cache,target=/deno-dir deno task build
+# Prime all runtime/dev imports into cache during build.
+RUN deno cache -A dev.ts main.ts
+RUN deno task build
 
 FROM denoland/deno:latest AS runtime
 
 WORKDIR /app
+ENV DENO_DIR=/deno-dir
 COPY --from=builder /app /app
+COPY --from=builder /deno-dir /deno-dir
 
 EXPOSE 8000
 
