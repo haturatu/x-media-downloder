@@ -45,7 +45,19 @@ export const handler = async (
         );
       }
 
-      const userPath = path.join(UPLOAD_FOLDER, username);
+      const uploadRoot = path.resolve(UPLOAD_FOLDER);
+      const userPath = path.resolve(path.join(uploadRoot, username));
+      const relativeToRoot = path.relative(uploadRoot, userPath);
+      if (
+        relativeToRoot.length === 0 ||
+        relativeToRoot.startsWith("..") ||
+        path.isAbsolute(relativeToRoot)
+      ) {
+        return new Response(
+          JSON.stringify({ success: false, message: "Invalid username path" }),
+          { status: 400, headers: { "Content-Type": "application/json" } },
+        );
+      }
 
       let imageCount = 0;
       try {
