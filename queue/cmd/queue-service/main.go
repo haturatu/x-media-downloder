@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math/rand"
 	"mime/multipart"
 	"net/http"
 	"os"
@@ -112,6 +113,11 @@ type autotagResult struct {
 	Status  string `json:"status"`
 }
 
+type imageTag struct {
+	Tag        string  `json:"tag"`
+	Confidence float64 `json:"confidence"`
+}
+
 func main() {
 	mode := flag.String("mode", "all", "run mode: all|api|worker")
 	flag.Parse()
@@ -191,6 +197,11 @@ func runAPI(st *appState) {
 	mux.HandleFunc("/api/autotag/reload", st.handleAutotagReload)
 	mux.HandleFunc("/api/autotag/untagged", st.handleAutotagUntagged)
 	mux.HandleFunc("/api/autotag/status", st.handleAutotagStatus)
+	mux.HandleFunc("/api/tags", st.handleTags)
+	mux.HandleFunc("/api/users", st.handleUsers)
+	mux.HandleFunc("/api/users/", st.handleUsersSubroutes)
+	mux.HandleFunc("/api/images", st.handleImages)
+	mux.HandleFunc("/api/images/retag", st.handleImagesRetag)
 
 	log.Printf("queue api listening on %s", st.cfg.apiAddr)
 	if err := http.ListenAndServe(st.cfg.apiAddr, mux); err != nil {
@@ -448,6 +459,410 @@ func (st *appState) handleAutotagStatus(w http.ResponseWriter, r *http.Request) 
 		resp["total"] = v
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+func (st *appState) handleTags(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	page := parsePositiveInt(r.URL.Query().Get("page"), 1)
+	perPage := parsePositiveInt(r.URL.Query().Get("per_page"), 100)
+	offset := (page - 1) * perPage
+
+	tags, err := st.store.GetAllTags()
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "Internal Server Error"})
+		return
+	}
+
+	totalItems := len(tags)
+	start, end := pageBounds(offset, perPage, totalItems)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"items":        tags[start:end],
+		"total_items":  totalItems,
+		"per_page":     perPage,
+		"current_page": page,
+		"total_pages":  totalPages(totalItems, perPage),
+	})
+}
+
+func (st *appState) handleUsers(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		st.handleUsersGet(w, r)
+	case http.MethodDelete:
+		st.handleUsersDelete(w, r)
+	default:
+		w.WriteHeader(http.StatusMethodNotAllowed)
+	}
+}
+
+func (st *appState) handleUsersGet(w http.ResponseWriter, r *http.Request) {
+	q := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("q")))
+	page := parsePositiveInt(r.URL.Query().Get("page"), 1)
+	perPage := parsePositiveInt(r.URL.Query().Get("per_page"), 100)
+	offset := (page - 1) * perPage
+
+	type userInfo struct {
+		Username   string `json:"username"`
+		TweetCount int    `json:"tweet_count"`
+	}
+	users := make([]userInfo, 0)
+	entries, err := os.ReadDir(st.cfg.mediaRoot)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "Internal Server Error"})
+		return
+	}
+
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		username := entry.Name()
+		if q != "" && !strings.Contains(strings.ToLower(username), q) {
+			continue
+		}
+		userPath := filepath.Join(st.cfg.mediaRoot, username)
+		tweetCount := 0
+		tweets, err := os.ReadDir(userPath)
+		if err == nil {
+			for _, tweet := range tweets {
+				if tweet.IsDir() {
+					tweetCount++
+				}
+			}
+		}
+		if tweetCount > 0 {
+			users = append(users, userInfo{Username: username, TweetCount: tweetCount})
+		}
+	}
+	sort.Slice(users, func(i, j int) bool { return users[i].Username < users[j].Username })
+
+	totalItems := len(users)
+	start, end := pageBounds(offset, perPage, totalItems)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"items":        users[start:end],
+		"total_items":  totalItems,
+		"per_page":     perPage,
+		"current_page": page,
+		"total_pages":  totalPages(totalItems, perPage),
+	})
+}
+
+func (st *appState) handleUsersDelete(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Username string `json:"username"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": "username is required"})
+		return
+	}
+	username := strings.TrimSpace(body.Username)
+	if username == "" || strings.Contains(username, "/") || strings.Contains(username, "\\") {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": "Invalid username"})
+		return
+	}
+	userPath, err := resolvePathUnderRoot(st.cfg.mediaRoot, username)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": "Invalid username"})
+		return
+	}
+
+	imageCount := countImages(userPath)
+	if err := os.RemoveAll(userPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "Internal Server Error"})
+		return
+	}
+	if err := st.store.DeleteTagsForUser(username); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "Internal Server Error"})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"success":        true,
+		"message":        fmt.Sprintf("Deleted user '%s' and %d images", username, imageCount),
+		"username":       username,
+		"deleted_images": imageCount,
+	})
+}
+
+func (st *appState) handleUsersSubroutes(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	path := strings.TrimPrefix(r.URL.Path, "/api/users/")
+	if !strings.HasSuffix(path, "/tweets") {
+		http.NotFound(w, r)
+		return
+	}
+	username := strings.TrimSuffix(path, "/tweets")
+	username = strings.TrimSuffix(username, "/")
+	if username == "" || strings.Contains(username, "/") || strings.Contains(username, "\\") {
+		http.NotFound(w, r)
+		return
+	}
+	st.handleUserTweetsGet(w, r, username)
+}
+
+func (st *appState) handleUserTweetsGet(w http.ResponseWriter, r *http.Request, username string) {
+	page := parsePositiveInt(r.URL.Query().Get("page"), 1)
+	perPage := parsePositiveInt(r.URL.Query().Get("per_page"), 100)
+	offset := (page - 1) * perPage
+
+	userPath, err := resolvePathUnderRoot(st.cfg.mediaRoot, username)
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]any{"error": "User not found"})
+		return
+	}
+	entries, err := os.ReadDir(userPath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			writeJSON(w, http.StatusNotFound, map[string]any{"error": "User not found"})
+			return
+		}
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "Internal Server Error"})
+		return
+	}
+
+	tweetIDs := make([]string, 0)
+	for _, entry := range entries {
+		if entry.IsDir() {
+			tweetIDs = append(tweetIDs, entry.Name())
+		}
+	}
+	sort.Sort(sort.Reverse(sort.StringSlice(tweetIDs)))
+
+	type tweet struct {
+		TweetID string `json:"tweet_id"`
+		Images  []any  `json:"images"`
+	}
+	tweets := make([]tweet, 0)
+	for _, tweetID := range tweetIDs {
+		tweetPath := filepath.Join(userPath, tweetID)
+		imgEntries, err := os.ReadDir(tweetPath)
+		if err != nil {
+			continue
+		}
+		imagePaths := make([]string, 0)
+		for _, img := range imgEntries {
+			if img.IsDir() || !isImageFile(img.Name()) {
+				continue
+			}
+			full := filepath.Join(tweetPath, img.Name())
+			imagePaths = append(imagePaths, normalizeRelPath(st.cfg.mediaRoot, full))
+		}
+		if len(imagePaths) == 0 {
+			continue
+		}
+		tagsMap, err := st.store.GetTagsForFiles(imagePaths)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "Internal Server Error"})
+			return
+		}
+		images := make([]any, 0, len(imagePaths))
+		sort.Strings(imagePaths)
+		for _, p := range imagePaths {
+			images = append(images, map[string]any{"path": p, "tags": tagsMap[p]})
+		}
+		tweets = append(tweets, tweet{TweetID: tweetID, Images: images})
+	}
+
+	totalItems := len(tweets)
+	start, end := pageBounds(offset, perPage, totalItems)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"items":        tweets[start:end],
+		"total_items":  totalItems,
+		"per_page":     perPage,
+		"current_page": page,
+		"total_pages":  totalPages(totalItems, perPage),
+	})
+}
+
+func (st *appState) handleImages(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		st.handleImagesGet(w, r)
+	case http.MethodDelete:
+		st.handleImagesDelete(w, r)
+	default:
+		w.WriteHeader(http.StatusMethodNotAllowed)
+	}
+}
+
+func (st *appState) handleImagesGet(w http.ResponseWriter, r *http.Request) {
+	sortMode := strings.TrimSpace(r.URL.Query().Get("sort"))
+	if sortMode == "" {
+		sortMode = "latest"
+	}
+	page := parsePositiveInt(r.URL.Query().Get("page"), 1)
+	perPage := parsePositiveInt(r.URL.Query().Get("per_page"), 100)
+	offset := (page - 1) * perPage
+	searchTags := splitCSV(r.URL.Query().Get("tags"))
+
+	type imageInfo struct {
+		Path  string
+		MTime int64
+	}
+	allImages := make([]imageInfo, 0)
+
+	if len(searchTags) > 0 {
+		paths, err := st.store.FindFilesByTags(searchTags)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "Internal Server Error"})
+			return
+		}
+		for _, p := range paths {
+			full := filepath.Join(st.cfg.mediaRoot, filepath.FromSlash(p))
+			info, err := os.Stat(full)
+			if err != nil {
+				continue
+			}
+			allImages = append(allImages, imageInfo{Path: p, MTime: info.ModTime().UnixMilli()})
+		}
+	} else {
+		files, err := listImageFiles(st.cfg.mediaRoot)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "Internal Server Error"})
+			return
+		}
+		for _, full := range files {
+			info, err := os.Stat(full)
+			if err != nil {
+				continue
+			}
+			allImages = append(allImages, imageInfo{Path: normalizeRelPath(st.cfg.mediaRoot, full), MTime: info.ModTime().UnixMilli()})
+		}
+	}
+
+	totalItems := len(allImages)
+	switch sortMode {
+	case "random":
+		rand.Shuffle(len(allImages), func(i, j int) { allImages[i], allImages[j] = allImages[j], allImages[i] })
+	default:
+		sort.Slice(allImages, func(i, j int) bool { return allImages[i].MTime > allImages[j].MTime })
+	}
+
+	start, end := pageBounds(offset, perPage, totalItems)
+	pageImages := allImages[start:end]
+	paths := make([]string, 0, len(pageImages))
+	for _, img := range pageImages {
+		paths = append(paths, img.Path)
+	}
+	tagsMap, err := st.store.GetTagsForFiles(paths)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "Internal Server Error"})
+		return
+	}
+
+	items := make([]any, 0, len(pageImages))
+	for _, img := range pageImages {
+		items = append(items, map[string]any{
+			"path": img.Path,
+			"tags": tagsMap[img.Path],
+		})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"items":        items,
+		"total_items":  totalItems,
+		"per_page":     perPage,
+		"current_page": page,
+		"total_pages":  totalPages(totalItems, perPage),
+	})
+}
+
+func (st *appState) handleImagesDelete(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Filepath string `json:"filepath"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": "filepath is required"})
+		return
+	}
+	rel := strings.TrimSpace(strings.ReplaceAll(body.Filepath, "\\", "/"))
+	if rel == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": "filepath is required"})
+		return
+	}
+	full, err := resolvePathUnderRoot(st.cfg.mediaRoot, rel)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": "Invalid filepath"})
+		return
+	}
+	if err := os.Remove(full); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			writeJSON(w, http.StatusNotFound, map[string]any{"success": false, "message": "Image not found"})
+			return
+		}
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "Internal Server Error"})
+		return
+	}
+	_ = st.store.DeleteTagsForFile(rel)
+	_ = cleanupEmptyParents(full, st.cfg.mediaRoot)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"success":  true,
+		"message":  "Image deleted",
+		"filepath": rel,
+	})
+}
+
+func (st *appState) handleImagesRetag(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	var body struct {
+		Filepath string `json:"filepath"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": "filepath is required"})
+		return
+	}
+	rel := strings.TrimSpace(strings.ReplaceAll(body.Filepath, "\\", "/"))
+	if rel == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": "filepath is required"})
+		return
+	}
+	existing, err := st.store.GetTagsForFiles([]string{rel})
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "Internal Server Error"})
+		return
+	}
+	if len(existing[rel]) > 0 {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"success": true,
+			"message": "Image already has tags.",
+			"tags":    existing[rel],
+		})
+		return
+	}
+	full, err := resolvePathUnderRoot(st.cfg.mediaRoot, rel)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": "Invalid filepath"})
+		return
+	}
+	if _, err := os.Stat(full); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			writeJSON(w, http.StatusNotFound, map[string]any{"success": false, "message": "File not found"})
+			return
+		}
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "Internal Server Error"})
+		return
+	}
+	hash, err := fileMD5(full)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"success": false, "message": "Could not read file"})
+		return
+	}
+	_ = st.autotagFile(full, rel, hash)
+	_ = st.store.MarkImageProcessed(hash)
+	updated, err := st.store.GetTagsForFiles([]string{rel})
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "Internal Server Error"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "tags": updated[rel]})
 }
 
 func (st *appState) processDownloadTask(ctx context.Context, t *asynq.Task) error {
@@ -728,15 +1143,25 @@ func (st *appState) autotagFile(fullPath, relativePath, _ string) error {
 }
 
 func openStore(path string) (*store, error) {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return nil, fmt.Errorf("failed to create db directory %s: %w", dir, err)
+	}
+	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o664)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open db file %s for read/write: %w", path, err)
+	}
+	_ = f.Close()
+
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("sql open failed for %s: %w", path, err)
 	}
 	if _, err := db.Exec(`PRAGMA journal_mode=DELETE;`); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("set journal mode failed for %s: %w", path, err)
 	}
 	if _, err := db.Exec(`PRAGMA busy_timeout=5000;`); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("set busy timeout failed for %s: %w", path, err)
 	}
 	if _, err := db.Exec(`
 		CREATE TABLE IF NOT EXISTS image_tags (
@@ -835,6 +1260,105 @@ func (s *store) GetAllTaggedFilepaths() (map[string]struct{}, error) {
 	return result, rows.Err()
 }
 
+func (s *store) GetTagsForFiles(filepaths []string) (map[string][]imageTag, error) {
+	result := make(map[string][]imageTag, len(filepaths))
+	for _, p := range filepaths {
+		result[p] = []imageTag{}
+	}
+	if len(filepaths) == 0 {
+		return result, nil
+	}
+	placeholders := strings.TrimRight(strings.Repeat("?,", len(filepaths)), ",")
+	query := fmt.Sprintf(
+		"SELECT filepath, tag, confidence FROM image_tags WHERE filepath IN (%s) ORDER BY confidence DESC",
+		placeholders,
+	)
+	args := make([]any, 0, len(filepaths))
+	for _, p := range filepaths {
+		args = append(args, p)
+	}
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var filepathVal string
+		var tag string
+		var confidence float64
+		if err := rows.Scan(&filepathVal, &tag, &confidence); err != nil {
+			return nil, err
+		}
+		result[filepathVal] = append(result[filepathVal], imageTag{Tag: tag, Confidence: confidence})
+	}
+	return result, rows.Err()
+}
+
+func (s *store) GetAllTags() ([]map[string]any, error) {
+	rows, err := s.db.Query(`
+		SELECT tag, COUNT(id) as tag_count
+		FROM image_tags
+		GROUP BY tag
+		ORDER BY tag_count DESC, tag ASC
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := make([]map[string]any, 0)
+	for rows.Next() {
+		var tag string
+		var count int
+		if err := rows.Scan(&tag, &count); err != nil {
+			return nil, err
+		}
+		items = append(items, map[string]any{"tag": tag, "count": count})
+	}
+	return items, rows.Err()
+}
+
+func (s *store) FindFilesByTags(tags []string) ([]string, error) {
+	if len(tags) == 0 {
+		return []string{}, nil
+	}
+	query := "SELECT filepath FROM image_tags WHERE tag = ?"
+	for i := 1; i < len(tags); i++ {
+		query += " INTERSECT SELECT filepath FROM image_tags WHERE tag = ?"
+	}
+	args := make([]any, 0, len(tags))
+	for _, tag := range tags {
+		args = append(args, tag)
+	}
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := make([]string, 0)
+	for rows.Next() {
+		var filepathVal string
+		if err := rows.Scan(&filepathVal); err != nil {
+			return nil, err
+		}
+		items = append(items, filepathVal)
+	}
+	return items, rows.Err()
+}
+
+func (s *store) DeleteTagsForFile(filepathVal string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, err := s.db.Exec(`DELETE FROM image_tags WHERE filepath = ?`, filepathVal)
+	return err
+}
+
+func (s *store) DeleteTagsForUser(username string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, err := s.db.Exec(`DELETE FROM image_tags WHERE filepath LIKE ?`, username+"/%")
+	return err
+}
+
 func setTaskState(ctx context.Context, rdb *redis.Client, taskID, status string, result interface{}) {
 	rec := queueTaskStatus{Status: status, Result: result, UpdatedAt: time.Now().UTC().Format(time.RFC3339)}
 	b, _ := json.Marshal(rec)
@@ -857,6 +1381,109 @@ func writeJSON(w http.ResponseWriter, status int, payload interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(payload)
+}
+
+func parsePositiveInt(raw string, fallback int) int {
+	val := strings.TrimSpace(raw)
+	if val == "" {
+		return fallback
+	}
+	var n int
+	if _, err := fmt.Sscanf(val, "%d", &n); err != nil || n <= 0 {
+		return fallback
+	}
+	return n
+}
+
+func pageBounds(offset, perPage, total int) (int, int) {
+	if offset < 0 {
+		offset = 0
+	}
+	if offset > total {
+		offset = total
+	}
+	end := offset + perPage
+	if end > total {
+		end = total
+	}
+	return offset, end
+}
+
+func totalPages(totalItems, perPage int) int {
+	if totalItems <= 0 {
+		return 0
+	}
+	return (totalItems + perPage - 1) / perPage
+}
+
+func splitCSV(raw string) []string {
+	parts := strings.Split(raw, ",")
+	items := make([]string, 0, len(parts))
+	for _, part := range parts {
+		v := strings.TrimSpace(part)
+		if v != "" {
+			items = append(items, v)
+		}
+	}
+	return items
+}
+
+func resolvePathUnderRoot(root, rel string) (string, error) {
+	cleanRel := filepath.Clean(filepath.FromSlash(strings.TrimSpace(rel)))
+	if cleanRel == "." || cleanRel == "" || cleanRel == "/" {
+		return "", errors.New("invalid path")
+	}
+	absRoot, err := filepath.Abs(root)
+	if err != nil {
+		return "", err
+	}
+	absPath, err := filepath.Abs(filepath.Join(absRoot, cleanRel))
+	if err != nil {
+		return "", err
+	}
+	if absPath != absRoot && !strings.HasPrefix(absPath, absRoot+string(os.PathSeparator)) {
+		return "", errors.New("path traversal")
+	}
+	return absPath, nil
+}
+
+func countImages(root string) int {
+	count := 0
+	_ = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return nil
+		}
+		if isImageFile(d.Name()) {
+			count++
+		}
+		return nil
+	})
+	return count
+}
+
+func cleanupEmptyParents(startFilePath, uploadRoot string) error {
+	absRoot, err := filepath.Abs(uploadRoot)
+	if err != nil {
+		return err
+	}
+	current := filepath.Dir(startFilePath)
+	for {
+		absCurrent, err := filepath.Abs(current)
+		if err != nil {
+			return err
+		}
+		if absCurrent == absRoot || !strings.HasPrefix(absCurrent, absRoot+string(os.PathSeparator)) {
+			return nil
+		}
+		entries, err := os.ReadDir(absCurrent)
+		if err != nil || len(entries) > 0 {
+			return nil
+		}
+		if err := os.Remove(absCurrent); err != nil {
+			return nil
+		}
+		current = filepath.Dir(absCurrent)
+	}
 }
 
 func toMap(v interface{}) map[string]any {
