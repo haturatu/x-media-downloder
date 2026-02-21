@@ -52,6 +52,7 @@ services:
     environment:
       - REDIS_ADDR=redis:6379
       - ASYNQ_QUEUE=default
+      - ASYNQ_INTERACTIVE_QUEUE=interactive
       - QUEUE_API_ADDR=:8001
       - TAGS_DB_PATH=/data/tags.db
       - AUTOTAGGER_URL=http://autotagger:5000/evaluate
@@ -86,6 +87,7 @@ services:
     environment:
       - REDIS_ADDR=redis:6379
       - ASYNQ_QUEUE=default
+      - ASYNQ_INTERACTIVE_QUEUE=interactive
       - ASYNQ_CONCURRENCY=20
       - TAGS_DB_PATH=/data/tags.db
       - AUTOTAGGER_URL=http://autotagger:5000/evaluate

@@ -32,6 +32,17 @@ export default function ImageModal({
 
   const API_BASE_URL = getApiBaseUrl();
 
+  const waitForTask = async (taskId: string): Promise<any> => {
+    for (let i = 0; i < 180; i++) {
+      const res = await fetch(`${API_BASE_URL}/api/tasks/status?id=${encodeURIComponent(taskId)}`);
+      const data = await res.json();
+      if (data.state === "SUCCESS") return data;
+      if (data.state === "FAILURE") throw new Error(data.message || "Task failed");
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+    throw new Error("Task timeout");
+  };
+
   // Update currentImage and currentIndex when initialImage or allImages change
   useEffect(() => {
     setCurrentImage(initialImage);
@@ -69,8 +80,11 @@ export default function ImageModal({
       const data = await res.json();
 
       if (data.success) {
-        setRetagStatus(data.message || "Tags generated successfully!");
+        const finalData = data.task_id ? await waitForTask(data.task_id) : data;
+        const result = finalData.result || finalData;
+        setRetagStatus(result.message || "Tags generated successfully!");
         const updatedImage = { ...currentImage, tags: data.tags };
+        updatedImage.tags = result.tags || updatedImage.tags || [];
         setCurrentImage(updatedImage);
         onImageUpdate(updatedImage, currentIndex);
       } else {
@@ -99,6 +113,9 @@ export default function ImageModal({
       const data = await res.json();
       if (!res.ok || !data.success) {
         throw new Error(data.message || "Failed to delete image");
+      }
+      if (data.task_id) {
+        await waitForTask(data.task_id);
       }
       onImageDelete(currentImage.path, currentIndex);
       setRetagStatus("Image deleted.");

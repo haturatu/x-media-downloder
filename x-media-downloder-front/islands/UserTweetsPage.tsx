@@ -40,6 +40,17 @@ export default function UserTweetsPage(props: UserTweetsProps) {
   const API_BASE_URL = getApiBaseUrl();
   const allImages = tweets.flatMap((tweet) => tweet.images);
 
+  const waitForTask = async (taskId: string): Promise<any> => {
+    for (let i = 0; i < 120; i++) {
+      const res = await fetch(`${API_BASE_URL}/api/tasks/status?id=${encodeURIComponent(taskId)}`);
+      const data = await res.json();
+      if (data.state === "SUCCESS") return data;
+      if (data.state === "FAILURE") throw new Error(data.message || "Task failed");
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+    throw new Error("Task timeout");
+  };
+
   // Update the global signal whenever the local images change
   useEffect(() => {
     allGalleryImages.value = allImages;
@@ -90,6 +101,9 @@ export default function UserTweetsPage(props: UserTweetsProps) {
       const data = await res.json();
       if (!res.ok || !data.success) {
         throw new Error(data.message || "Failed to delete user");
+      }
+      if (data.task_id) {
+        await waitForTask(data.task_id);
       }
       globalThis.location.href = "/users";
     } catch (err) {
