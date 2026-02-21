@@ -15,6 +15,11 @@ services:
       interval: 5m
       timeout: 30s
       retries: 30
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"
 
   worker:
     build: .
@@ -39,6 +44,11 @@ services:
       interval: 10s
       timeout: 10s
       retries: 5
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"
 
   autotagger:
     build: ../autotagger
@@ -57,13 +67,18 @@ services:
       interval: 1m30s
       timeout: 10s
       retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"
 
   frontend:
     build: ./x-media-downloder-front
     command: deno run -A --watch=static/,routes/ dev.ts
     restart: always
     ports:
-      - "8000:8000"
+      - "8888:8000"
     volumes:
       - ./x-media-downloder-front:/app
       - ./downloaded_images:/app/downloaded_images
@@ -80,3 +95,9 @@ services:
     networks:
       - default
       - autotagger-service
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"
+
