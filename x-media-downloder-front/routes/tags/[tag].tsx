@@ -17,7 +17,8 @@ export default function TagImagesRoute({ data }: PageProps<TagImagesProps>) {
 }
 
 export const handler = async (req: Request, ctx: FreshContext): Promise<Response> => {
-  const { tag } = ctx.params;
+  const encodedTag = ctx.params.tag;
+  const tag = decodeURIComponent(encodedTag);
   const url = new URL(req.url);
   const page = parseInt(url.searchParams.get("page") || "1");
   const per_page = parseInt(url.searchParams.get("per_page") || "100");

@@ -26,6 +26,7 @@ export default function TagsPage(props: TagsProps) {
   const [totalPages, setTotalPages] = useState<number>(initialTotalPages || 0);
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
+  const [deletingTag, setDeletingTag] = useState<string | null>(null);
 
   const API_BASE_URL = getApiBaseUrl();
 
@@ -49,6 +50,30 @@ export default function TagsPage(props: TagsProps) {
     globalThis.history.pushState({}, "", `/tags?page=${page}`);
   };
 
+  const handleDeleteTag = async (tag: string) => {
+    if (!globalThis.confirm(`Delete tag "${tag}" from all images?`)) {
+      return;
+    }
+    setDeletingTag(tag);
+    setError(null);
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/tags`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tag }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.message || "Failed to delete tag");
+      }
+      setTags((prev) => prev.filter((item) => item.tag !== tag));
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setDeletingTag(null);
+    }
+  };
+
   return (
     <>
       <Head>
@@ -65,13 +90,19 @@ export default function TagsPage(props: TagsProps) {
 
         <div class="tag-chip-list">
           {tags && tags.map((tag) => (
-            <a
-              key={tag.tag}
-              href={`/tags/${tag.tag}`}
-              class="tag-chip"
-            >
-              {tag.tag} ({tag.count})
-            </a>
+            <div key={tag.tag} class="tag-chip">
+              <a href={`/tags/${encodeURIComponent(tag.tag)}`}>
+                {tag.tag} ({tag.count})
+              </a>
+              <button
+                type="button"
+                class="btn btn-danger users-delete-btn"
+                disabled={deletingTag === tag.tag}
+                onClick={() => handleDeleteTag(tag.tag)}
+              >
+                {deletingTag === tag.tag ? "Deleting..." : "Delete"}
+              </button>
+            </div>
           ))}
         </div>
 

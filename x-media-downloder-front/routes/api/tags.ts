@@ -4,15 +4,16 @@ function queueApiBaseUrl(): string {
 }
 
 export const handler = async (req: Request, _ctx: FreshContext): Promise<Response> => {
-  if (req.method !== "GET") {
+  if (req.method !== "GET" && req.method !== "DELETE") {
     return new Response(null, { status: 405 });
   }
 
   try {
     const url = new URL(req.url);
     const upstream = await fetch(`${queueApiBaseUrl()}/api/tags${url.search}`, {
-      method: "GET",
+      method: req.method,
       headers: { "Content-Type": "application/json" },
+      body: req.method === "DELETE" ? await req.text() : undefined,
     });
     const body = await upstream.text();
     return new Response(body, {

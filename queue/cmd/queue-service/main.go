@@ -522,18 +522,36 @@ func (st *appState) handleTaskStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 func (st *appState) handleTags(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
+	switch r.Method {
+	case http.MethodGet:
+		st.handleTagsGet(w, r)
+	case http.MethodDelete:
+		st.handleTagsDelete(w, r)
+	default:
 		w.WriteHeader(http.StatusMethodNotAllowed)
-		return
 	}
+}
+
+func (st *appState) handleTagsGet(w http.ResponseWriter, r *http.Request) {
 	page := parsePositiveInt(r.URL.Query().Get("page"), 1)
 	perPage := parsePositiveInt(r.URL.Query().Get("per_page"), 100)
 	offset := (page - 1) * perPage
+	q := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("q")))
 
 	tags, err := st.store.GetAllTags()
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "Internal Server Error"})
 		return
+	}
+	if q != "" {
+		filtered := make([]map[string]any, 0, len(tags))
+		for _, item := range tags {
+			tagVal, _ := item["tag"].(string)
+			if strings.Contains(strings.ToLower(tagVal), q) {
+				filtered = append(filtered, item)
+			}
+		}
+		tags = filtered
 	}
 
 	totalItems := len(tags)
@@ -544,6 +562,32 @@ func (st *appState) handleTags(w http.ResponseWriter, r *http.Request) {
 		"per_page":     perPage,
 		"current_page": page,
 		"total_pages":  totalPages(totalItems, perPage),
+	})
+}
+
+func (st *appState) handleTagsDelete(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Tag string `json:"tag"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": "tag is required"})
+		return
+	}
+	tag := strings.TrimSpace(body.Tag)
+	if tag == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": "tag is required"})
+		return
+	}
+	deleted, err := st.store.DeleteTag(tag)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "Internal Server Error"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"success":       true,
+		"message":       fmt.Sprintf("Deleted tag '%s' from %d entries", tag, deleted),
+		"tag":           tag,
+		"deleted_count": deleted,
 	})
 }
 
@@ -767,7 +811,7 @@ func (st *appState) handleImagesGet(w http.ResponseWriter, r *http.Request) {
 	allImages := make([]imageInfo, 0)
 
 	if len(searchTags) > 0 {
-		paths, err := st.store.FindFilesByTags(searchTags)
+		paths, err := st.store.FindFilesByTagPatterns(searchTags)
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "Internal Server Error"})
 			return
@@ -1559,17 +1603,17 @@ func (s *store) GetAllTags() ([]map[string]any, error) {
 	return items, err
 }
 
-func (s *store) FindFilesByTags(tags []string) ([]string, error) {
+func (s *store) FindFilesByTagPatterns(tags []string) ([]string, error) {
 	if len(tags) == 0 {
 		return []string{}, nil
 	}
-	query := "SELECT filepath FROM image_tags WHERE tag = ?"
+	query := "SELECT filepath FROM image_tags WHERE LOWER(tag) LIKE ?"
 	for i := 1; i < len(tags); i++ {
-		query += " INTERSECT SELECT filepath FROM image_tags WHERE tag = ?"
+		query += " INTERSECT SELECT filepath FROM image_tags WHERE LOWER(tag) LIKE ?"
 	}
 	args := make([]any, 0, len(tags))
 	for _, tag := range tags {
-		args = append(args, tag)
+		args = append(args, "%"+strings.ToLower(strings.TrimSpace(tag))+"%")
 	}
 	items := make([]string, 0)
 	err := withSQLiteRetry(func() error {
@@ -1588,6 +1632,21 @@ func (s *store) FindFilesByTags(tags []string) ([]string, error) {
 		return rows.Err()
 	})
 	return items, err
+}
+
+func (s *store) DeleteTag(tag string) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var affected int64
+	err := withSQLiteRetry(func() error {
+		result, err := s.db.Exec(`DELETE FROM image_tags WHERE tag = ?`, tag)
+		if err != nil {
+			return err
+		}
+		affected, _ = result.RowsAffected()
+		return nil
+	})
+	return int(affected), err
 }
 
 func (s *store) DeleteTagsForFile(filepathVal string) error {

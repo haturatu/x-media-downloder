@@ -34,6 +34,7 @@ export default function TagImagesPage(props: TagImagesProps) {
   const [totalPages, setTotalPages] = useState<number>(initialTotalPages || 0);
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
+  const [deletingTag, setDeletingTag] = useState<boolean>(false);
 
   const API_BASE_URL = getApiBaseUrl();
 
@@ -64,12 +65,35 @@ export default function TagImagesPage(props: TagImagesProps) {
 
   const handlePageChange = (page: number) => {
     setCurrentPage(page);
-    globalThis.history.pushState({}, "", `/tags/${tag}?page=${page}`);
+    globalThis.history.pushState({}, "", `/tags/${encodeURIComponent(tag)}?page=${page}`);
   };
 
   const handleImageClick = (image: Image, index: number) => {
     selectedImage.value = image;
     selectedImageIndex.value = index;
+  };
+
+  const handleDeleteTag = async () => {
+    if (!globalThis.confirm(`Delete tag "${tag}" from all images?`)) {
+      return;
+    }
+    setDeletingTag(true);
+    setError(null);
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/tags`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tag }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.message || "Failed to delete tag");
+      }
+      globalThis.location.href = "/tags";
+    } catch (err) {
+      setError(err.message);
+      setDeletingTag(false);
+    }
   };
 
   return (
@@ -78,7 +102,17 @@ export default function TagImagesPage(props: TagImagesProps) {
         <title>Tag: {tag} - X Media Downloader</title>
       </Head>
       <div class="page-panel">
-        <h2 class="page-title">Images tagged with "{tag}"</h2>
+        <div class="status-head">
+          <h2 class="page-title">Images tagged with "{tag}"</h2>
+          <button
+            type="button"
+            class="btn btn-danger"
+            disabled={deletingTag}
+            onClick={handleDeleteTag}
+          >
+            {deletingTag ? "Deleting..." : "Delete This Tag"}
+          </button>
+        </div>
         {loading && <p>Loading images...</p>}
         {error && <p class="error-text">Error: {error}</p>}
         {images.length === 0 && !loading && !error && (

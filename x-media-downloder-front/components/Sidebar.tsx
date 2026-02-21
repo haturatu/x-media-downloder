@@ -184,7 +184,7 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
               {tags.map((tag) => (
                 <li key={tag.tag}>
                   <div class="tag-item">
-                    <a href={`/tags/${tag.tag}`} onClick={onNavigate}>
+                    <a href={`/tags/${encodeURIComponent(tag.tag)}`} onClick={onNavigate}>
                       {tag.tag}
                     </a>
                     <span class="item-count">{tag.count}</span>
