@@ -45,7 +45,7 @@ services:
     restart: always
     volumes:
       - ./downloaded_images:/app/downloaded_images
-      - ./tags.db:/data/tags.db
+      - ./:/data
     depends_on:
       - redis
       - autotagger
@@ -79,7 +79,7 @@ services:
     restart: always
     volumes:
       - ./downloaded_images:/app/downloaded_images
-      - ./tags.db:/data/tags.db
+      - ./:/data
     depends_on:
       - redis
       - autotagger
@@ -132,7 +132,7 @@ services:
     volumes:
       - ./x-media-downloder-front:/app
       - ./downloaded_images:/app/downloaded_images
-      - ./tags.db:/data/tags.db
+      - ./:/data
     depends_on:
       - redis
       - queue-api
