@@ -45,14 +45,7 @@ export const handler = async (
         );
       }
 
-      const uploadRoot = path.resolve(UPLOAD_FOLDER);
-      const userPath = path.resolve(path.join(UPLOAD_FOLDER, username));
-      if (!userPath.startsWith(uploadRoot + path.SEP)) {
-        return new Response(
-          JSON.stringify({ success: false, message: "Invalid username path" }),
-          { status: 400, headers: { "Content-Type": "application/json" } },
-        );
-      }
+      const userPath = path.join(UPLOAD_FOLDER, username);
 
       let imageCount = 0;
       try {
