@@ -45,7 +45,7 @@ services:
     restart: always
     volumes:
       - ./downloaded_images:/app/downloaded_images
-      - ./tags.db:/app/tags.db
+      - ./tags.db:/data/tags.db
     depends_on:
       - redis
       - autotagger
@@ -53,7 +53,7 @@ services:
       - REDIS_ADDR=redis:6379
       - ASYNQ_QUEUE=default
       - QUEUE_API_ADDR=:8001
-      - TAGS_DB_PATH=/app/tags.db
+      - TAGS_DB_PATH=/data/tags.db
       - AUTOTAGGER_URL=http://autotagger:5000/evaluate
       - AUTOTAGGER=true
       - MEDIA_ROOT=/app/downloaded_images
@@ -79,7 +79,7 @@ services:
     restart: always
     volumes:
       - ./downloaded_images:/app/downloaded_images
-      - ./tags.db:/app/tags.db
+      - ./tags.db:/data/tags.db
     depends_on:
       - redis
       - autotagger
@@ -87,7 +87,7 @@ services:
       - REDIS_ADDR=redis:6379
       - ASYNQ_QUEUE=default
       - ASYNQ_CONCURRENCY=20
-      - TAGS_DB_PATH=/app/tags.db
+      - TAGS_DB_PATH=/data/tags.db
       - AUTOTAGGER_URL=http://autotagger:5000/evaluate
       - AUTOTAGGER=true
       - MEDIA_ROOT=/app/downloaded_images
@@ -132,7 +132,7 @@ services:
     volumes:
       - ./x-media-downloder-front:/app
       - ./downloaded_images:/app/downloaded_images
-      - ./tags.db:/app/tags.db
+      - ./tags.db:/data/tags.db
     depends_on:
       - redis
       - queue-api
@@ -142,6 +142,7 @@ services:
       # API is now served from the app itself
       - API_BASE_URL=http://localhost:8000
       - ASYNQ_API_BASE_URL=http://queue-api:8001
+      - TAGS_DB_PATH=/data/tags.db
       - MEDIA_ROOT=/app/downloaded_images
       # Env vars needed for autotagging features
       - AUTOTAGGER=true
