@@ -105,6 +105,10 @@ services:
   autotagger:
     build: ../autotagger
     restart: always
+    gpus: all
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
     user: "65534:65534"
     volumes:
       - ../autotagger:/autotagger
