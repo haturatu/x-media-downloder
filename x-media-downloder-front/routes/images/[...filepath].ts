@@ -23,9 +23,14 @@ export const handler = async (
 
     const uploadRoot = path.resolve(UPLOAD_FOLDER);
     const fullPath = path.resolve(uploadRoot, normalizedRelative);
+    const relativeToRoot = path.relative(uploadRoot, fullPath);
 
     // Basic security: prevent path traversal attacks
-    if (!fullPath.startsWith(uploadRoot + path.SEP)) {
+    if (
+      relativeToRoot.length === 0 ||
+      relativeToRoot.startsWith("..") ||
+      path.isAbsolute(relativeToRoot)
+    ) {
       return new Response("Invalid path", { status: 400 });
     }
 
