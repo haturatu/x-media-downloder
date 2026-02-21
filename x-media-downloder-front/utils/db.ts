@@ -3,7 +3,7 @@
 import { DB } from "sqlite";
 import { Tag } from "./types.ts";
 
-const DATABASE_PATH = Deno.env.get("TAGS_DB_PATH") || "/data/tags.db";
+const DATABASE_PATH = Deno.env.get("TAGS_DB_PATH") || "./tags.db";
 
 // The DB instance is shared across the application.
 // Deno's module system ensures this is a singleton.

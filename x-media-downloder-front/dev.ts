@@ -7,6 +7,8 @@ import { initDb } from "./utils/db.ts";
 import "$std/dotenv/load.ts";
 
 // Initialize the database before starting the server
-initDb();
+if (Deno.args[0] !== "build") {
+  initDb();
+}
 
 await dev(import.meta.url, "./main.ts", config);
