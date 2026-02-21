@@ -33,6 +33,9 @@ const (
 	taskTypeDownload        = "xmd:download_tweet_media"
 	taskTypeAutotagAll      = "xmd:autotag_all"
 	taskTypeAutotagUntagged = "xmd:autotag_untagged"
+	taskTypeDeleteUser      = "xmd:delete_user"
+	taskTypeDeleteImage     = "xmd:delete_image"
+	taskTypeRetagImage      = "xmd:retag_image"
 
 	taskListKey     = "xmd:download_task_ids"
 	taskURLHashKey  = "xmd:download_task_urls"
@@ -46,6 +49,7 @@ type config struct {
 	redisPassword    string
 	redisDB          int
 	queueName        string
+	interactiveQueue string
 	mediaRoot        string
 	dbPath           string
 	autotaggerURL    string
@@ -80,6 +84,21 @@ type downloadTaskPayload struct {
 
 type autotagTaskPayload struct {
 	TaskID string `json:"task_id"`
+}
+
+type deleteUserTaskPayload struct {
+	TaskID   string `json:"task_id"`
+	Username string `json:"username"`
+}
+
+type deleteImageTaskPayload struct {
+	TaskID   string `json:"task_id"`
+	Filepath string `json:"filepath"`
+}
+
+type retagImageTaskPayload struct {
+	TaskID   string `json:"task_id"`
+	Filepath string `json:"filepath"`
 }
 
 type downloadTaskStatusResponse struct {
@@ -151,6 +170,7 @@ func loadConfig() config {
 		redisPassword:    os.Getenv("REDIS_PASSWORD"),
 		redisDB:          envInt("REDIS_DB", 0),
 		queueName:        envOrDefault("ASYNQ_QUEUE", "default"),
+		interactiveQueue: envOrDefault("ASYNQ_INTERACTIVE_QUEUE", "interactive"),
 		mediaRoot:        envOrDefault("MEDIA_ROOT", "/app/downloaded_images"),
 		dbPath:           envOrDefault("TAGS_DB_PATH", "/app/tags.db"),
 		autotaggerURL:    os.Getenv("AUTOTAGGER_URL"),
@@ -202,6 +222,7 @@ func runAPI(st *appState) {
 	mux.HandleFunc("/api/users/", st.handleUsersSubroutes)
 	mux.HandleFunc("/api/images", st.handleImages)
 	mux.HandleFunc("/api/images/retag", st.handleImagesRetag)
+	mux.HandleFunc("/api/tasks/status", st.handleTaskStatus)
 
 	log.Printf("queue api listening on %s", st.cfg.apiAddr)
 	if err := http.ListenAndServe(st.cfg.apiAddr, mux); err != nil {
@@ -212,13 +233,22 @@ func runAPI(st *appState) {
 func runWorker(st *appState) {
 	srv := asynq.NewServer(
 		asynq.RedisClientOpt{Addr: st.cfg.redisAddr, Password: st.cfg.redisPassword, DB: st.cfg.redisDB},
-		asynq.Config{Concurrency: st.cfg.concurrency, Queues: map[string]int{st.cfg.queueName: 1}},
+		asynq.Config{
+			Concurrency: st.cfg.concurrency,
+			Queues: map[string]int{
+				st.cfg.interactiveQueue: 4,
+				st.cfg.queueName:        1,
+			},
+		},
 	)
 
 	mux := asynq.NewServeMux()
 	mux.HandleFunc(taskTypeDownload, st.processDownloadTask)
 	mux.HandleFunc(taskTypeAutotagAll, st.processAutotagAllTask)
 	mux.HandleFunc(taskTypeAutotagUntagged, st.processAutotagUntaggedTask)
+	mux.HandleFunc(taskTypeDeleteUser, st.processDeleteUserTask)
+	mux.HandleFunc(taskTypeDeleteImage, st.processDeleteImageTask)
+	mux.HandleFunc(taskTypeRetagImage, st.processRetagImageTask)
 
 	log.Printf("queue worker started queue=%s concurrency=%d", st.cfg.queueName, st.cfg.concurrency)
 	if err := srv.Run(mux); err != nil {
@@ -461,6 +491,36 @@ func (st *appState) handleAutotagStatus(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, resp)
 }
 
+func (st *appState) handleTaskStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	taskID := strings.TrimSpace(r.URL.Query().Get("id"))
+	if taskID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "id is required"})
+		return
+	}
+	rec, ok := getTaskState(r.Context(), st.redis, taskID)
+	if !ok {
+		writeJSON(w, http.StatusOK, map[string]any{"task_id": taskID, "state": "PENDING", "message": "Queued or running"})
+		return
+	}
+	resultMap, _ := rec.Result.(map[string]any)
+	message := "Running"
+	if s, ok := stringFromAny(resultMap["message"]); ok && s != "" {
+		message = s
+	} else if s, ok := stringFromAny(resultMap["status"]); ok && s != "" {
+		message = s
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"task_id": taskID,
+		"state":   rec.Status,
+		"message": message,
+		"result":  resultMap,
+	})
+}
+
 func (st *appState) handleTags(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		w.WriteHeader(http.StatusMethodNotAllowed)
@@ -563,27 +623,26 @@ func (st *appState) handleUsersDelete(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": "Invalid username"})
 		return
 	}
-	userPath, err := resolvePathUnderRoot(st.cfg.mediaRoot, username)
+	taskID := uuid.NewString()
+	payload := deleteUserTaskPayload{TaskID: taskID, Username: username}
+	b, _ := json.Marshal(payload)
+	task := asynq.NewTask(taskTypeDeleteUser, b)
+	_, err := st.asynqCli.Enqueue(task,
+		asynq.Queue(st.cfg.interactiveQueue),
+		asynq.TaskID(taskID),
+		asynq.MaxRetry(0),
+		asynq.Timeout(10*time.Minute),
+	)
 	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": "Invalid username"})
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "failed to queue task"})
 		return
 	}
-
-	imageCount := countImages(userPath)
-	if err := os.RemoveAll(userPath); err != nil && !errors.Is(err, os.ErrNotExist) {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "Internal Server Error"})
-		return
-	}
-	if err := st.store.DeleteTagsForUser(username); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "Internal Server Error"})
-		return
-	}
-
-	writeJSON(w, http.StatusOK, map[string]any{
-		"success":        true,
-		"message":        fmt.Sprintf("Deleted user '%s' and %d images", username, imageCount),
-		"username":       username,
-		"deleted_images": imageCount,
+	setTaskState(r.Context(), st.redis, taskID, "PENDING", map[string]any{"message": "Delete user task queued"})
+	writeJSON(w, http.StatusAccepted, map[string]any{
+		"success": true,
+		"queued":  true,
+		"task_id": taskID,
+		"message": "Delete user task queued",
 	})
 }
 
@@ -785,25 +844,26 @@ func (st *appState) handleImagesDelete(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": "filepath is required"})
 		return
 	}
-	full, err := resolvePathUnderRoot(st.cfg.mediaRoot, rel)
+	taskID := uuid.NewString()
+	payload := deleteImageTaskPayload{TaskID: taskID, Filepath: rel}
+	b, _ := json.Marshal(payload)
+	task := asynq.NewTask(taskTypeDeleteImage, b)
+	_, err := st.asynqCli.Enqueue(task,
+		asynq.Queue(st.cfg.interactiveQueue),
+		asynq.TaskID(taskID),
+		asynq.MaxRetry(0),
+		asynq.Timeout(5*time.Minute),
+	)
 	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": "Invalid filepath"})
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "failed to queue task"})
 		return
 	}
-	if err := os.Remove(full); err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			writeJSON(w, http.StatusNotFound, map[string]any{"success": false, "message": "Image not found"})
-			return
-		}
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "Internal Server Error"})
-		return
-	}
-	_ = st.store.DeleteTagsForFile(rel)
-	_ = cleanupEmptyParents(full, st.cfg.mediaRoot)
-	writeJSON(w, http.StatusOK, map[string]any{
-		"success":  true,
-		"message":  "Image deleted",
-		"filepath": rel,
+	setTaskState(r.Context(), st.redis, taskID, "PENDING", map[string]any{"message": "Delete image task queued"})
+	writeJSON(w, http.StatusAccepted, map[string]any{
+		"success": true,
+		"queued":  true,
+		"task_id": taskID,
+		"message": "Delete image task queued",
 	})
 }
 
@@ -824,45 +884,27 @@ func (st *appState) handleImagesRetag(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": "filepath is required"})
 		return
 	}
-	existing, err := st.store.GetTagsForFiles([]string{rel})
+	taskID := uuid.NewString()
+	payload := retagImageTaskPayload{TaskID: taskID, Filepath: rel}
+	b, _ := json.Marshal(payload)
+	task := asynq.NewTask(taskTypeRetagImage, b)
+	_, err := st.asynqCli.Enqueue(task,
+		asynq.Queue(st.cfg.interactiveQueue),
+		asynq.TaskID(taskID),
+		asynq.MaxRetry(0),
+		asynq.Timeout(10*time.Minute),
+	)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "Internal Server Error"})
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "failed to queue task"})
 		return
 	}
-	if len(existing[rel]) > 0 {
-		writeJSON(w, http.StatusOK, map[string]any{
-			"success": true,
-			"message": "Image already has tags.",
-			"tags":    existing[rel],
-		})
-		return
-	}
-	full, err := resolvePathUnderRoot(st.cfg.mediaRoot, rel)
-	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": "Invalid filepath"})
-		return
-	}
-	if _, err := os.Stat(full); err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			writeJSON(w, http.StatusNotFound, map[string]any{"success": false, "message": "File not found"})
-			return
-		}
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "Internal Server Error"})
-		return
-	}
-	hash, err := fileMD5(full)
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"success": false, "message": "Could not read file"})
-		return
-	}
-	_ = st.autotagFile(full, rel, hash)
-	_ = st.store.MarkImageProcessed(hash)
-	updated, err := st.store.GetTagsForFiles([]string{rel})
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "Internal Server Error"})
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"success": true, "tags": updated[rel]})
+	setTaskState(r.Context(), st.redis, taskID, "PENDING", map[string]any{"message": "Retag task queued"})
+	writeJSON(w, http.StatusAccepted, map[string]any{
+		"success": true,
+		"queued":  true,
+		"task_id": taskID,
+		"message": "Retag task queued",
+	})
 }
 
 func (st *appState) processDownloadTask(ctx context.Context, t *asynq.Task) error {
@@ -1033,6 +1075,150 @@ func (st *appState) processAutotagUntaggedTask(ctx context.Context, t *asynq.Tas
 	return nil
 }
 
+func (st *appState) processDeleteUserTask(ctx context.Context, t *asynq.Task) error {
+	var payload deleteUserTaskPayload
+	if err := json.Unmarshal(t.Payload(), &payload); err != nil {
+		return err
+	}
+	taskID := payload.TaskID
+	if taskID == "" {
+		taskID = uuid.NewString()
+	}
+	username := strings.TrimSpace(payload.Username)
+	if username == "" {
+		err := errors.New("invalid username")
+		setTaskState(ctx, st.redis, taskID, "FAILURE", map[string]any{"message": err.Error()})
+		return err
+	}
+
+	userPath, err := resolvePathUnderRoot(st.cfg.mediaRoot, username)
+	if err != nil {
+		setTaskState(ctx, st.redis, taskID, "FAILURE", map[string]any{"message": "Invalid username"})
+		return err
+	}
+	setTaskState(ctx, st.redis, taskID, "PROGRESS", map[string]any{"message": "Deleting user..."})
+
+	imageCount := countImages(userPath)
+	if err := os.RemoveAll(userPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+		setTaskState(ctx, st.redis, taskID, "FAILURE", map[string]any{"message": err.Error()})
+		return err
+	}
+	if err := st.store.DeleteTagsForUser(username); err != nil {
+		setTaskState(ctx, st.redis, taskID, "FAILURE", map[string]any{"message": err.Error()})
+		return err
+	}
+
+	setTaskState(ctx, st.redis, taskID, "SUCCESS", map[string]any{
+		"success":        true,
+		"message":        fmt.Sprintf("Deleted user '%s' and %d images", username, imageCount),
+		"username":       username,
+		"deleted_images": imageCount,
+	})
+	return nil
+}
+
+func (st *appState) processDeleteImageTask(ctx context.Context, t *asynq.Task) error {
+	var payload deleteImageTaskPayload
+	if err := json.Unmarshal(t.Payload(), &payload); err != nil {
+		return err
+	}
+	taskID := payload.TaskID
+	if taskID == "" {
+		taskID = uuid.NewString()
+	}
+	rel := strings.TrimSpace(strings.ReplaceAll(payload.Filepath, "\\", "/"))
+	if rel == "" {
+		err := errors.New("filepath is required")
+		setTaskState(ctx, st.redis, taskID, "FAILURE", map[string]any{"message": err.Error()})
+		return err
+	}
+
+	full, err := resolvePathUnderRoot(st.cfg.mediaRoot, rel)
+	if err != nil {
+		setTaskState(ctx, st.redis, taskID, "FAILURE", map[string]any{"message": "Invalid filepath"})
+		return err
+	}
+	setTaskState(ctx, st.redis, taskID, "PROGRESS", map[string]any{"message": "Deleting image..."})
+
+	if err := os.Remove(full); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			setTaskState(ctx, st.redis, taskID, "FAILURE", map[string]any{"message": "Image not found"})
+			return err
+		}
+		setTaskState(ctx, st.redis, taskID, "FAILURE", map[string]any{"message": err.Error()})
+		return err
+	}
+	_ = st.store.DeleteTagsForFile(rel)
+	_ = cleanupEmptyParents(full, st.cfg.mediaRoot)
+	setTaskState(ctx, st.redis, taskID, "SUCCESS", map[string]any{
+		"success":  true,
+		"message":  "Image deleted",
+		"filepath": rel,
+	})
+	return nil
+}
+
+func (st *appState) processRetagImageTask(ctx context.Context, t *asynq.Task) error {
+	var payload retagImageTaskPayload
+	if err := json.Unmarshal(t.Payload(), &payload); err != nil {
+		return err
+	}
+	taskID := payload.TaskID
+	if taskID == "" {
+		taskID = uuid.NewString()
+	}
+	rel := strings.TrimSpace(strings.ReplaceAll(payload.Filepath, "\\", "/"))
+	if rel == "" {
+		err := errors.New("filepath is required")
+		setTaskState(ctx, st.redis, taskID, "FAILURE", map[string]any{"message": err.Error()})
+		return err
+	}
+
+	existing, err := st.store.GetTagsForFiles([]string{rel})
+	if err != nil {
+		setTaskState(ctx, st.redis, taskID, "FAILURE", map[string]any{"message": err.Error()})
+		return err
+	}
+	if len(existing[rel]) > 0 {
+		setTaskState(ctx, st.redis, taskID, "SUCCESS", map[string]any{
+			"success": true,
+			"message": "Image already has tags.",
+			"tags":    existing[rel],
+		})
+		return nil
+	}
+
+	full, err := resolvePathUnderRoot(st.cfg.mediaRoot, rel)
+	if err != nil {
+		setTaskState(ctx, st.redis, taskID, "FAILURE", map[string]any{"message": "Invalid filepath"})
+		return err
+	}
+	if _, err := os.Stat(full); err != nil {
+		setTaskState(ctx, st.redis, taskID, "FAILURE", map[string]any{"message": "File not found"})
+		return err
+	}
+
+	setTaskState(ctx, st.redis, taskID, "PROGRESS", map[string]any{"message": "Retagging image..."})
+	hash, err := fileMD5(full)
+	if err != nil {
+		setTaskState(ctx, st.redis, taskID, "FAILURE", map[string]any{"message": "Could not read file"})
+		return err
+	}
+	_ = st.autotagFile(full, rel, hash)
+	_ = st.store.MarkImageProcessed(hash)
+	updated, err := st.store.GetTagsForFiles([]string{rel})
+	if err != nil {
+		setTaskState(ctx, st.redis, taskID, "FAILURE", map[string]any{"message": err.Error()})
+		return err
+	}
+	setTaskState(ctx, st.redis, taskID, "SUCCESS", map[string]any{
+		"success": true,
+		"message": "Tags generated successfully!",
+		"tags":    updated[rel],
+	})
+	return nil
+}
+
 func (st *appState) downloadImage(imageURL, tweetURL, username string, index int) string {
 	req, _ := http.NewRequest(http.MethodGet, imageURL, nil)
 	req.Header.Set("User-Agent", "Mozilla/5.0")
@@ -1157,6 +1343,11 @@ func openStore(path string) (*store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("sql open failed for %s: %w", path, err)
 	}
+	// SQLite is safer with a single shared connection under concurrent access.
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
+	db.SetConnMaxLifetime(0)
+	db.SetConnMaxIdleTime(0)
 	if _, err := db.Exec(`PRAGMA journal_mode=DELETE;`); err != nil {
 		return nil, fmt.Errorf("set journal mode failed for %s: %w", path, err)
 	}
@@ -1184,80 +1375,125 @@ func openStore(path string) (*store, error) {
 	return &store{db: db}, nil
 }
 
+func isRetryableSQLiteError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "database is locked") ||
+		strings.Contains(msg, "database is busy") ||
+		strings.Contains(msg, "sqlite_busy") ||
+		strings.Contains(msg, "unable to open database file")
+}
+
+func withSQLiteRetry(op func() error) error {
+	var err error
+	backoff := 50 * time.Millisecond
+	for i := 0; i < 4; i++ {
+		err = op()
+		if err == nil {
+			return nil
+		}
+		if !isRetryableSQLiteError(err) {
+			return err
+		}
+		time.Sleep(backoff)
+		backoff *= 2
+	}
+	return err
+}
+
 func (s *store) Close() error {
 	return s.db.Close()
 }
 
 func (s *store) IsImageProcessed(hash string) (bool, error) {
-	var x int
-	err := s.db.QueryRow(`SELECT 1 FROM processed_images WHERE image_hash = ?`, hash).Scan(&x)
-	if errors.Is(err, sql.ErrNoRows) {
-		return false, nil
-	}
-	if err != nil {
-		return false, err
-	}
-	return true, nil
+	var found bool
+	err := withSQLiteRetry(func() error {
+		var x int
+		err := s.db.QueryRow(`SELECT 1 FROM processed_images WHERE image_hash = ?`, hash).Scan(&x)
+		if errors.Is(err, sql.ErrNoRows) {
+			found = false
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		found = true
+		return nil
+	})
+	return found, err
 }
 
 func (s *store) MarkImageProcessed(hash string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	_, err := s.db.Exec(`INSERT OR IGNORE INTO processed_images (image_hash) VALUES (?)`, hash)
-	return err
+	return withSQLiteRetry(func() error {
+		_, err := s.db.Exec(`INSERT OR IGNORE INTO processed_images (image_hash) VALUES (?)`, hash)
+		return err
+	})
 }
 
 func (s *store) AddTags(filepath string, tags map[string]float64) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	tx, err := s.db.Begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	stmt, err := tx.Prepare(`INSERT OR IGNORE INTO image_tags (filepath, tag, confidence) VALUES (?, ?, ?)`)
-	if err != nil {
-		return err
-	}
-	defer stmt.Close()
-
-	for tag, conf := range tags {
-		if _, err := stmt.Exec(filepath, tag, conf); err != nil {
+	return withSQLiteRetry(func() error {
+		tx, err := s.db.Begin()
+		if err != nil {
 			return err
 		}
-	}
-	return tx.Commit()
+		defer tx.Rollback()
+		stmt, err := tx.Prepare(`INSERT OR IGNORE INTO image_tags (filepath, tag, confidence) VALUES (?, ?, ?)`)
+		if err != nil {
+			return err
+		}
+		defer stmt.Close()
+
+		for tag, conf := range tags {
+			if _, err := stmt.Exec(filepath, tag, conf); err != nil {
+				return err
+			}
+		}
+		return tx.Commit()
+	})
 }
 
 func (s *store) DeleteAllTags() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	_, err := s.db.Exec(`DELETE FROM image_tags`)
-	return err
+	return withSQLiteRetry(func() error {
+		_, err := s.db.Exec(`DELETE FROM image_tags`)
+		return err
+	})
 }
 
 func (s *store) ClearProcessedImages() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	_, err := s.db.Exec(`DELETE FROM processed_images`)
-	return err
+	return withSQLiteRetry(func() error {
+		_, err := s.db.Exec(`DELETE FROM processed_images`)
+		return err
+	})
 }
 
 func (s *store) GetAllTaggedFilepaths() (map[string]struct{}, error) {
-	rows, err := s.db.Query(`SELECT DISTINCT filepath FROM image_tags`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
 	result := make(map[string]struct{})
-	for rows.Next() {
-		var p string
-		if err := rows.Scan(&p); err != nil {
-			return nil, err
+	err := withSQLiteRetry(func() error {
+		rows, err := s.db.Query(`SELECT DISTINCT filepath FROM image_tags`)
+		if err != nil {
+			return err
 		}
-		result[p] = struct{}{}
-	}
-	return result, rows.Err()
+		defer rows.Close()
+		for rows.Next() {
+			var p string
+			if err := rows.Scan(&p); err != nil {
+				return err
+			}
+			result[p] = struct{}{}
+		}
+		return rows.Err()
+	})
+	return result, err
 }
 
 func (s *store) GetTagsForFiles(filepaths []string) (map[string][]imageTag, error) {
@@ -1277,44 +1513,50 @@ func (s *store) GetTagsForFiles(filepaths []string) (map[string][]imageTag, erro
 	for _, p := range filepaths {
 		args = append(args, p)
 	}
-	rows, err := s.db.Query(query, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var filepathVal string
-		var tag string
-		var confidence float64
-		if err := rows.Scan(&filepathVal, &tag, &confidence); err != nil {
-			return nil, err
+	err := withSQLiteRetry(func() error {
+		rows, err := s.db.Query(query, args...)
+		if err != nil {
+			return err
 		}
-		result[filepathVal] = append(result[filepathVal], imageTag{Tag: tag, Confidence: confidence})
-	}
-	return result, rows.Err()
+		defer rows.Close()
+		for rows.Next() {
+			var filepathVal string
+			var tag string
+			var confidence float64
+			if err := rows.Scan(&filepathVal, &tag, &confidence); err != nil {
+				return err
+			}
+			result[filepathVal] = append(result[filepathVal], imageTag{Tag: tag, Confidence: confidence})
+		}
+		return rows.Err()
+	})
+	return result, err
 }
 
 func (s *store) GetAllTags() ([]map[string]any, error) {
-	rows, err := s.db.Query(`
-		SELECT tag, COUNT(id) as tag_count
-		FROM image_tags
-		GROUP BY tag
-		ORDER BY tag_count DESC, tag ASC
-	`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
 	items := make([]map[string]any, 0)
-	for rows.Next() {
-		var tag string
-		var count int
-		if err := rows.Scan(&tag, &count); err != nil {
-			return nil, err
+	err := withSQLiteRetry(func() error {
+		rows, err := s.db.Query(`
+			SELECT tag, COUNT(id) as tag_count
+			FROM image_tags
+			GROUP BY tag
+			ORDER BY tag_count DESC, tag ASC
+		`)
+		if err != nil {
+			return err
 		}
-		items = append(items, map[string]any{"tag": tag, "count": count})
-	}
-	return items, rows.Err()
+		defer rows.Close()
+		for rows.Next() {
+			var tag string
+			var count int
+			if err := rows.Scan(&tag, &count); err != nil {
+				return err
+			}
+			items = append(items, map[string]any{"tag": tag, "count": count})
+		}
+		return rows.Err()
+	})
+	return items, err
 }
 
 func (s *store) FindFilesByTags(tags []string) ([]string, error) {
@@ -1329,34 +1571,41 @@ func (s *store) FindFilesByTags(tags []string) ([]string, error) {
 	for _, tag := range tags {
 		args = append(args, tag)
 	}
-	rows, err := s.db.Query(query, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
 	items := make([]string, 0)
-	for rows.Next() {
-		var filepathVal string
-		if err := rows.Scan(&filepathVal); err != nil {
-			return nil, err
+	err := withSQLiteRetry(func() error {
+		rows, err := s.db.Query(query, args...)
+		if err != nil {
+			return err
 		}
-		items = append(items, filepathVal)
-	}
-	return items, rows.Err()
+		defer rows.Close()
+		for rows.Next() {
+			var filepathVal string
+			if err := rows.Scan(&filepathVal); err != nil {
+				return err
+			}
+			items = append(items, filepathVal)
+		}
+		return rows.Err()
+	})
+	return items, err
 }
 
 func (s *store) DeleteTagsForFile(filepathVal string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	_, err := s.db.Exec(`DELETE FROM image_tags WHERE filepath = ?`, filepathVal)
-	return err
+	return withSQLiteRetry(func() error {
+		_, err := s.db.Exec(`DELETE FROM image_tags WHERE filepath = ?`, filepathVal)
+		return err
+	})
 }
 
 func (s *store) DeleteTagsForUser(username string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	_, err := s.db.Exec(`DELETE FROM image_tags WHERE filepath LIKE ?`, username+"/%")
-	return err
+	return withSQLiteRetry(func() error {
+		_, err := s.db.Exec(`DELETE FROM image_tags WHERE filepath LIKE ?`, username+"/%")
+		return err
+	})
 }
 
 func setTaskState(ctx context.Context, rdb *redis.Client, taskID, status string, result interface{}) {
