@@ -9,6 +9,7 @@ import * as $api_download from "./routes/api/download.ts";
 import * as $api_images from "./routes/api/images.ts";
 import * as $api_images_retag from "./routes/api/images/retag.ts";
 import * as $api_tags from "./routes/api/tags.ts";
+import * as $api_tasks_status from "./routes/api/tasks/status.ts";
 import * as $api_users from "./routes/api/users.ts";
 import * as $api_users_username_tweets from "./routes/api/users/[username]/tweets.ts";
 import * as $autotag_status from "./routes/autotag-status.tsx";
@@ -40,6 +41,7 @@ const manifest = {
     "./routes/api/images.ts": $api_images,
     "./routes/api/images/retag.ts": $api_images_retag,
     "./routes/api/tags.ts": $api_tags,
+    "./routes/api/tasks/status.ts": $api_tasks_status,
     "./routes/api/users.ts": $api_users,
     "./routes/api/users/[username]/tweets.ts": $api_users_username_tweets,
     "./routes/autotag-status.tsx": $autotag_status,
