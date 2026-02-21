@@ -732,7 +732,7 @@ func openStore(path string) (*store, error) {
 	if err != nil {
 		return nil, err
 	}
-	if _, err := db.Exec(`PRAGMA journal_mode=WAL;`); err != nil {
+	if _, err := db.Exec(`PRAGMA journal_mode=DELETE;`); err != nil {
 		return nil, err
 	}
 	if _, err := db.Exec(`PRAGMA busy_timeout=5000;`); err != nil {
