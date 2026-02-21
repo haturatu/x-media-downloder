@@ -9,7 +9,7 @@ COPY fresh.gen.ts .
 COPY . .
 
 # Prime all runtime/dev imports into cache during build.
-RUN deno cache -A dev.ts main.ts
+RUN deno cache dev.ts main.ts
 RUN deno task build
 
 FROM denoland/deno:latest AS runtime
