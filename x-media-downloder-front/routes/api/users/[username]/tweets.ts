@@ -4,6 +4,11 @@ import { FreshContext } from "$fresh/server.ts";
 import * as path from "$std/path/mod.ts";
 import { getTagsForFiles } from "../../../../utils/db.ts";
 import { getMediaRoot } from "../../../../utils/media_root.ts";
+import {
+  buildCacheKey,
+  getCachedValue,
+  setCachedValue,
+} from "../../../../utils/response_cache.ts";
 import type { Image, Tweet } from "../../../../utils/types.ts";
 
 const UPLOAD_FOLDER = getMediaRoot();
@@ -15,6 +20,23 @@ export const handler = async (
   try {
     const { username } = ctx.params;
     const url = new URL(_req.url);
+    const cacheKey = buildCacheKey(url.pathname, url.searchParams.toString());
+    const cachedResponse = getCachedValue<{
+      items: Tweet[];
+      total_items: number;
+      per_page: number;
+      current_page: number;
+      total_pages: number;
+    }>(cacheKey);
+    if (cachedResponse) {
+      return new Response(JSON.stringify(cachedResponse), {
+        headers: {
+          "Content-Type": "application/json",
+          "X-Cache": "HIT",
+        },
+      });
+    }
+
     const page = parseInt(url.searchParams.get("page") || "1");
     const per_page = parseInt(url.searchParams.get("per_page") || "100");
     const offset = (page - 1) * per_page;
@@ -81,9 +103,13 @@ export const handler = async (
       current_page: page,
       total_pages: total_pages,
     };
+    setCachedValue(cacheKey, response);
 
     return new Response(JSON.stringify(response), {
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        "X-Cache": "MISS",
+      },
     });
   } catch (error) {
     console.error("Error listing user tweets:", error);

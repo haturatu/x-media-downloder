@@ -5,6 +5,12 @@ import * as path from "$std/path/mod.ts";
 import { walk } from "$std/fs/walk.ts";
 import { deleteTagsForUser } from "../../utils/db.ts";
 import { getMediaRoot } from "../../utils/media_root.ts";
+import {
+  buildCacheKey,
+  getCachedValue,
+  invalidateCacheByPrefix,
+  setCachedValue,
+} from "../../utils/response_cache.ts";
 
 const UPLOAD_FOLDER = getMediaRoot();
 
@@ -75,6 +81,10 @@ export const handler = async (
       }
 
       deleteTagsForUser(username);
+      invalidateCacheByPrefix("/api/users?");
+      invalidateCacheByPrefix("/api/users/");
+      invalidateCacheByPrefix("/api/images?");
+      invalidateCacheByPrefix("/api/tags?");
 
       return new Response(
         JSON.stringify({
@@ -100,6 +110,23 @@ export const handler = async (
 
   try {
     const url = new URL(_req.url);
+    const cacheKey = buildCacheKey(url.pathname, url.searchParams.toString());
+    const cachedResponse = getCachedValue<{
+      items: UserInfo[];
+      total_items: number;
+      per_page: number;
+      current_page: number;
+      total_pages: number;
+    }>(cacheKey);
+    if (cachedResponse) {
+      return new Response(JSON.stringify(cachedResponse), {
+        headers: {
+          "Content-Type": "application/json",
+          "X-Cache": "HIT",
+        },
+      });
+    }
+
     const page = parseInt(url.searchParams.get("page") || "1");
     const per_page = parseInt(url.searchParams.get("per_page") || "100");
     const search_query = url.searchParams.get("q")?.toLowerCase() || "";
@@ -152,9 +179,13 @@ export const handler = async (
       current_page: page,
       total_pages: total_pages,
     };
+    setCachedValue(cacheKey, response);
 
     return new Response(JSON.stringify(response), {
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        "X-Cache": "MISS",
+      },
     });
   } catch (error) {
     console.error("Error listing users:", error);

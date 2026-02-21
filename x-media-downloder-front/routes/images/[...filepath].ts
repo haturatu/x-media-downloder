@@ -13,11 +13,26 @@ export const handler = async (
 ): Promise<Response> => {
   try {
     const filepath = ctx.params.filepath;
-    const fullPath = path.join(UPLOAD_FOLDER, filepath);
+    const uploadRoot = path.resolve(UPLOAD_FOLDER);
+    const fullPath = path.resolve(path.join(UPLOAD_FOLDER, filepath));
 
     // Basic security: prevent path traversal attacks
-    if (path.normalize(fullPath) !== fullPath) {
+    if (!fullPath.startsWith(uploadRoot + path.SEP)) {
       return new Response("Invalid path", { status: 400 });
+    }
+
+    const fileStat = await Deno.stat(fullPath);
+    const mtimeMs = fileStat.mtime?.getTime() ?? 0;
+    const etag = `W/\"${mtimeMs}-${fileStat.size}\"`;
+    if (_req.headers.get("if-none-match") === etag) {
+      return new Response(null, {
+        status: 304,
+        headers: {
+          ETag: etag,
+          "Cache-Control": "public, max-age=3600",
+          "Last-Modified": new Date(mtimeMs).toUTCString(),
+        },
+      });
     }
 
     const file = await Deno.open(fullPath, { read: true });
@@ -26,7 +41,12 @@ export const handler = async (
     const contentType = getMimeType(filepath) || "application/octet-stream";
 
     return new Response(readable, {
-      headers: { "Content-Type": contentType },
+      headers: {
+        "Content-Type": contentType,
+        ETag: etag,
+        "Cache-Control": "public, max-age=3600",
+        "Last-Modified": new Date(mtimeMs).toUTCString(),
+      },
     });
   } catch (error) {
     if (error instanceof Deno.errors.NotFound) {
