@@ -38,19 +38,24 @@ services:
         max-size: "5m"
         max-file: "2"
 
-  worker:
-    build: .
-    command: celery -A app.celery worker --loglevel=info --concurrency=20 --prefetch-multiplier=1
+  queue-api:
+    image: x-media-downloder-queue:latest
+    build: ./queue
+    command: --mode=api
     restart: always
     volumes:
       - ./downloaded_images:/app/downloaded_images
       - ./tags.db:/app/tags.db
     depends_on:
       - redis
+      - autotagger
     environment:
-      - CELERY_BROKER_URL=redis://redis:6379/0
-      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - REDIS_ADDR=redis:6379
+      - ASYNQ_QUEUE=default
+      - QUEUE_API_ADDR=:8001
+      - TAGS_DB_PATH=/app/tags.db
       - AUTOTAGGER_URL=http://autotagger:5000/evaluate
+      - AUTOTAGGER=true
       - MEDIA_ROOT=/app/downloaded_images
     networks:
       - default
@@ -58,10 +63,39 @@ services:
     mem_limit: "1g"
     cpus: "0.5"
     healthcheck:
-      test: ["CMD", "celery", "-A", "app.celery", "inspect", "ping"]
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8001/healthz --output /dev/null || exit 1"]
       interval: 10s
       timeout: 10s
       retries: 5
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"
+
+  queue-worker:
+    image: x-media-downloder-queue:latest
+    command: --mode=worker
+    restart: always
+    volumes:
+      - ./downloaded_images:/app/downloaded_images
+      - ./tags.db:/app/tags.db
+    depends_on:
+      - redis
+      - autotagger
+    environment:
+      - REDIS_ADDR=redis:6379
+      - ASYNQ_QUEUE=default
+      - ASYNQ_CONCURRENCY=20
+      - TAGS_DB_PATH=/app/tags.db
+      - AUTOTAGGER_URL=http://autotagger:5000/evaluate
+      - AUTOTAGGER=true
+      - MEDIA_ROOT=/app/downloaded_images
+    networks:
+      - default
+      - autotagger-service
+    mem_limit: "1g"
+    cpus: "0.5"
     logging:
       driver: json-file
       options:
@@ -101,10 +135,13 @@ services:
       - ./tags.db:/app/tags.db
     depends_on:
       - redis
+      - queue-api
+      - queue-worker
       - autotagger
     environment:
       # API is now served from the app itself
       - API_BASE_URL=http://localhost:8000
+      - ASYNQ_API_BASE_URL=http://queue-api:8001
       - MEDIA_ROOT=/app/downloaded_images
       # Env vars needed for autotagging features
       - AUTOTAGGER=true

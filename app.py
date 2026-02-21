@@ -3,14 +3,12 @@ import re
 import json
 import random
 import hashlib
-from urllib.parse import urlparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import requests
 from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
 from dotenv import load_dotenv
-from celery import Celery
 
 import database
 
@@ -25,44 +23,26 @@ executor = ThreadPoolExecutor(max_workers=5)
 
 AUTOTAGGER_ENABLED = os.getenv('AUTOTAGGER') == 'true'
 AUTOTAGGER_URL = os.getenv('AUTOTAGGER_URL')
-# ---------------------
-
-# --- In-memory Task Store ---
-TASK_STORE = {
-    'autotag_task_id': None
-}
-# --------------------------
-
-# --- Celery Configuration ---
-app.config.update(
-    broker_url=os.getenv('CELERY_BROKER_URL', 'sqla+sqlite:///celery_broker.db'),
-    result_backend=os.getenv('CELERY_RESULT_BACKEND', 'db+sqlite:///celery_results.db')
-)
-
-
-def make_celery(app):
-    celery = Celery(
-        app.import_name,
-        backend=app.config['result_backend'],
-        broker=app.config['broker_url']
-    )
-    celery.conf.update(app.config)
-
-    class ContextTask(celery.Task):
-        def __call__(self, *args, **kwargs):
-            with app.app_context():
-                return self.run(*args, **kwargs)
-
-    celery.Task = ContextTask
-    return celery
-
-celery = make_celery(app)
+QUEUE_API_BASE_URL = os.getenv('QUEUE_API_BASE_URL', 'http://queue-api:8001')
 # --------------------------
 
 # --- Database Initialization ---
 with app.app_context():
     database.init_db()
 # -----------------------------
+
+def proxy_queue_api(path, method='GET', payload=None, params=None):
+    url = f"{QUEUE_API_BASE_URL}{path}"
+    try:
+        response = requests.request(method, url, json=payload, params=params, timeout=30)
+        content_type = response.headers.get("Content-Type", "")
+        if "application/json" in content_type.lower():
+            body = response.json()
+        else:
+            body = {"message": response.text}
+        return body, response.status_code
+    except requests.RequestException as e:
+        return {"success": False, "message": f"Queue API unavailable: {e}"}, 503
 
 def extract_username_from_url(tweet_url):
     match = re.search(r'(?:x|twitter)\.com/([^/]+)/status/', tweet_url)
@@ -179,65 +159,13 @@ def download_all_images(image_urls, tweet_url, username, progress_callback=None)
         "errors": failures
     }
 
-# --- Celery Tasks ---
-@celery.task(bind=True, name='tasks.download_tweet_media')
-def download_tweet_media_task(self, tweet_url):
-    """Celery task to download all media from a single tweet URL."""
-    print(f"Starting download for: {tweet_url}")
-    try:
-        username = extract_username_from_url(tweet_url)
-        image_urls = get_tweet_images_alternative(tweet_url)
-        if not image_urls:
-            print(f"No images found for {tweet_url}")
-            return {"url": tweet_url, "success": False, "message": "No images found"}
-
-        total_images = len(image_urls)
-        success_count = 0
-        skipped_count = 0
-        failure_count = 0
-
-        self.update_state(state='PROGRESS', meta={
-            'current': 0,
-            'total': total_images,
-            'status': f'Starting download for {username}...'
-        })
-
-        def on_progress(completed_count, total_count, latest_result):
-            nonlocal success_count, skipped_count, failure_count
-            if latest_result.get('status') == 'success':
-                success_count += 1
-            elif latest_result.get('status') == 'skipped':
-                skipped_count += 1
-            elif latest_result.get('status') == 'failed':
-                failure_count += 1
-
-            self.update_state(state='PROGRESS', meta={
-                'current': completed_count,
-                'total': total_count,
-                'status': f"saved:{success_count} skipped:{skipped_count} failed:{failure_count}"
-            })
-
-        result = download_all_images(image_urls, tweet_url, username, progress_callback=on_progress)
-        print(f"Download result for {tweet_url}: {result['downloaded_count']} downloaded, {result['skipped_count']} skipped.")
-        return {"url": tweet_url, **result}
-    except Exception as e:
-        print(f"Error in download task for {tweet_url}: {e}")
-        return {"url": tweet_url, "success": False, "message": str(e)}
-
 # --- API endpoints ---
 
 @app.route('/api/download', methods=['POST'])
 def download_images_api():
-    urls = request.get_json().get('urls', [])
-    if not urls: return jsonify({"success": False, "message": "URL list is required"}), 400
-    
-    count = 0
-    for url in urls:
-        if (('x.com' in url or 'twitter.com' in url) and '/status/' in url):
-            download_tweet_media_task.delay(url)
-            count += 1
-            
-    return jsonify({"success": True, "message": f"{count} download tasks have been queued."})
+    payload = request.get_json(silent=True) or {}
+    body, status = proxy_queue_api('/api/download', method='POST', payload=payload)
+    return jsonify(body), status
 
 @app.route('/api/users')
 def list_users():
@@ -402,174 +330,20 @@ def get_all_tags_api():
         "total_pages": total_pages
     })
 
-@celery.task(bind=True)
-def _autotag_all_task(self):
-    """The actual task of clearing the DB and re-tagging EVERYTHING."""
-    print("Starting background task: FORCE AUTOTAG ALL IMAGES.")
-    try:
-        with app.app_context():
-            self.update_state(state='PROGRESS', meta={'current': 0, 'total': 1, 'status': 'Clearing database...'})
-            database.delete_all_tags()
-            database.clear_all_processed_images()
-            print("Database cleared.")
-
-            all_files_to_process = []
-            for root, _, files in os.walk(UPLOAD_FOLDER):
-                for file in files:
-                    if file.lower().endswith(('.jpg', '.jpeg', '.png', '.webp', '.gif')):
-                        filepath = os.path.join(root, file)
-                        try:
-                            with open(filepath, 'rb') as f:
-                                image_hash = hashlib.md5(f.read()).hexdigest()
-                            relative_path = os.path.relpath(filepath, UPLOAD_FOLDER).replace("\\\\", "/")
-                            all_files_to_process.append((filepath, relative_path, image_hash))
-                        except Exception as e:
-                            print(f"Error processing file {filepath} for hashing: {e}")
-            
-            total_files = len(all_files_to_process)
-            if total_files == 0:
-                return {'current': 0, 'total': 0, 'status': 'No images found to process.'}
-
-            print(f"Found {total_files} images to force re-tag.")
-            self.update_state(state='PROGRESS', meta={'current': 0, 'total': total_files, 'status': 'Starting processing...'})
-
-            def autotag_and_mark(args):
-                filepath, relative_path, image_hash = args
-                try:
-                    autotag_file(filepath, relative_path, image_hash)
-                    database.mark_image_as_processed(image_hash)
-                    return True, relative_path # Success, and the path
-                except Exception as e:
-                    print(f"Error during autotag_and_mark for {relative_path}: {e}")
-                    return False, relative_path # Failure, and the path
-
-            futures = {executor.submit(autotag_and_mark, args): args for args in all_files_to_process}
-            processed_count = 0
-            for i, future in enumerate(as_completed(futures)):
-                success, relative_path = future.result()
-                if success:
-                    processed_count += 1
-                self.update_state(state='PROGRESS', meta={'current': processed_count, 'total': total_files, 'status': f'Processed {processed_count}/{total_files} (last: {relative_path}, success: {success})'})
-
-            return {'current': processed_count, 'total': total_files, 'status': f'Complete! Processed {processed_count} files.'}
-            
-    except Exception as e:
-        print(f"An error occurred during the force autotagging task: {e}")
-        self.update_state(state='FAILURE', meta={'exc_type': type(e).__name__, 'exc_message': str(e)})
-        raise e
-
-@celery.task(bind=True)
-def _autotag_untagged_task(self):
-    """The task of tagging only files that have no tags."""
-    print("Starting background task: autotag untagged files.")
-    try:
-        with app.app_context():
-            self.update_state(state='PROGRESS', meta={'current': 0, 'total': 1, 'status': 'Finding untagged files...'})
-            tagged_files = database.get_all_image_filepaths_from_db()
-            untagged_files_to_process = []
-
-            for root, _, files in os.walk(UPLOAD_FOLDER):
-                for file in files:
-                    if file.lower().endswith(('.jpg', '.jpeg', '.png', '.webp', '.gif')):
-                        filepath = os.path.join(root, file)
-                        relative_path = os.path.relpath(filepath, UPLOAD_FOLDER).replace("\\\\", "/")
-                        if relative_path not in tagged_files:
-                            try:
-                                with open(filepath, 'rb') as f:
-                                    image_hash = hashlib.md5(f.read()).hexdigest()
-                                untagged_files_to_process.append((filepath, relative_path, image_hash))
-                            except Exception as e:
-                                print(f"Error processing file {filepath} for hashing: {e}")
-            
-            total_files = len(untagged_files_to_process)
-            if total_files == 0:
-                return {'current': 0, 'total': 0, 'status': 'No new untagged images to process.'}
-
-            print(f"Found {total_files} untagged images to process.")
-            self.update_state(state='PROGRESS', meta={'current': 0, 'total': total_files, 'status': 'Starting processing...'})
-            
-            def autotag_and_mark(args):
-                filepath, relative_path, image_hash = args
-                try:
-                    autotag_file(filepath, relative_path, image_hash)
-                    database.mark_image_as_processed(image_hash)
-                    return True, relative_path # Success, and the path
-                except Exception as e:
-                    print(f"Error during autotag_and_mark for {relative_path}: {e}")
-                    return False, relative_path # Failure, and the path
-
-            futures = {executor.submit(autotag_and_mark, args): args for args in untagged_files_to_process}
-            processed_count = 0
-            for i, future in enumerate(as_completed(futures)):
-                success, relative_path = future.result()
-                if success:
-                    processed_count += 1
-                self.update_state(state='PROGRESS', meta={'current': processed_count, 'total': total_files, 'status': f'Processed {processed_count}/{total_files} (last: {relative_path}, success: {success})'})
-
-            return {'current': processed_count, 'total': total_files, 'status': f'Complete! Processed {processed_count} files.'}
-
-    except Exception as e:
-        print(f"An error occurred during the untagged autotagging task: {e}")
-        self.update_state(state='FAILURE', meta={'exc_type': type(e).__name__, 'exc_message': str(e)})
-        raise e
-
 @app.route('/api/autotag/reload', methods=['POST'])
 def autotag_reload_api():
-    if not AUTOTAGGER_ENABLED or not AUTOTAGGER_URL:
-        return jsonify({"success": False, "message": "Autotagger is not configured."}), 400
-    
-    task = _autotag_all_task.delay()
-    TASK_STORE['autotag_task_id'] = task.id
-    
-    return jsonify({"success": True, "message": "Started force re-tagging for ALL images in the background.", "task_id": task.id})
+    body, status = proxy_queue_api('/api/autotag/reload', method='POST')
+    return jsonify(body), status
 
 @app.route('/api/autotag/untagged', methods=['POST'])
 def autotag_untagged_api():
-    if not AUTOTAGGER_ENABLED or not AUTOTAGGER_URL:
-        return jsonify({"success": False, "message": "Autotagger is not configured."}), 400
-    
-    task = _autotag_untagged_task.delay()
-    TASK_STORE['autotag_task_id'] = task.id
-    
-    return jsonify({"success": True, "message": "Autotagging for untagged images started in the background.", "task_id": task.id})
+    body, status = proxy_queue_api('/api/autotag/untagged', method='POST')
+    return jsonify(body), status
 
 @app.route('/api/autotag/status')
 def autotag_status_api():
-    task_id = TASK_STORE.get('autotag_task_id')
-    if not task_id:
-        return jsonify({'state': 'NOT_FOUND', 'status': 'No autotagging task has been run yet.'})
-
-    task = celery.AsyncResult(task_id)
-    
-    if task.state == 'PENDING':
-        response = {'state': task.state, 'status': 'Task is pending...'}
-    elif task.state == 'PROGRESS':
-        info = task.meta or {}
-        response = {
-            'state': task.state,
-            'current': info.get('current', 0),
-            'total': info.get('total', 1),
-            'status': info.get('status', '')
-        }
-    elif task.state == 'SUCCESS':
-        info = task.info or {}
-        response = {
-            'state': task.state,
-            'current': info.get('current', 0),
-            'total': info.get('total', 0),
-            'status': info.get('status', 'Task completed successfully.')
-        }
-    else: # FAILURE or other states
-        info = task.info or {}
-        status_message = str(task.info)
-        if isinstance(info, dict):
-            status_message = info.get('exc_message', str(info))
-        response = {
-            'state': task.state,
-            'status': f"Task failed: {status_message}"
-        }
-        
-    return jsonify(response)
+    body, status = proxy_queue_api('/api/autotag/status', method='GET')
+    return jsonify(body), status
 
 
 

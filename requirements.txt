@@ -2,8 +2,4 @@ requests
 flask
 flask_cors
 python-dotenv
-celery
-sqlalchemy
 honcho
-redis
-kombu

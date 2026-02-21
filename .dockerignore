@@ -1,0 +1,21 @@
+.git
+.gitignore
+.env
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+
+# runtime/generated data
+downloaded_images/
+tags.db
+celery_broker.db
+celery_results.db
+
+# local tooling
+.vscode/
+.idea/
+
+# frontend build artifacts
+x-media-downloder-front/_fresh/

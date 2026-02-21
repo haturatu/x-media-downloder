@@ -7,7 +7,7 @@ X (旧Twitter) からメディアをダウンロードするためのツール�
 
 - UI/UXをPC・スマホ両対応に再構成
 - Danbooru風のクラシックなダークテーマに調整
-- ダウンロードタスクのCeleryステータス表示ページを追加（`/download-status`）
+- ダウンロードタスクのAsynqステータス表示ページを追加（`/download-status`）
 - ユーザ単位削除、画像単位削除を追加
 - `Download Media` のショートカットを追加（`Ctrl+Enter` / Macは `Cmd+Enter`）
 - 保存先ディレクトリを `MEDIA_ROOT` で変更可能に対応
@@ -33,10 +33,11 @@ X (旧Twitter) からメディアをダウンロードするためのツール�
 honcho start
 ```
 
-このコマンドは `Procfile` に基づいて、以下の2つのプロセスを同時に起動します。
+このコマンドは `Procfile` に基づいて、以下の3つのプロセスを同時に起動します。
 
 -   **Webサーバー**: `http://localhost:8888` でアクセス可能なフロントエンドを提供します。
--   **バックグラウンドワーカー**: URLからのメディアダウンロードを非同期で処理します。
+-   **Queue API (Go + asynq)**: タスク投入とステータス取得を処理します。
+-   **Queue Worker (Go + asynq)**: URLからのメディアダウンロード/Autotagの非同期実行を処理します。
 
 これにより、ダウンロード処理が完了するのを待つことなく、すぐに次のダウンロードリクエストを送ることができます。
 
@@ -54,7 +55,7 @@ Docker Compose構成では、`nginx` が `8888` を受けて `frontend` にプ�
 
 ### タスクステータス確認
 
-- `Tasks` メニュー、またはサイドバーの `View Celery Status` から確認
+- `Tasks` メニュー、またはサイドバーの `View Queue Status` から確認
 - ページ: `/download-status`
 - 表示内容:
   - Queue Depth
@@ -106,6 +107,6 @@ Docker利用時は、`MEDIA_ROOT` のパスがコンテナ内で見えるよう�
 ## API（追加/更新）
 
 - `POST /api/download`: ダウンロードタスクをキュー投入
-- `GET /api/download`: Celeryタスクの最新ステータス一覧を取得
+- `GET /api/download`: asynqタスクの最新ステータス一覧を取得
 - `DELETE /api/users`: ユーザ単位削除（body: `{ "username": "..." }`）
 - `DELETE /api/images`: 画像単位削除（body: `{ "filepath": "user/tweet/file.jpg" }`）

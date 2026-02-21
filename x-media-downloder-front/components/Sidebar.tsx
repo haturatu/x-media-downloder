@@ -126,7 +126,7 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
           {downloading ? "Queuing..." : "Download Media"}
         </button>
         <a href="/download-status" class="download-status-link">
-          View Celery Status
+          View Queue Status
         </a>
         {statusMessage && <p class="muted-message">{statusMessage}</p>}
       </div>

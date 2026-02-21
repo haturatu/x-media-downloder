@@ -63,7 +63,7 @@ export default function DownloadStatusPage() {
       </Head>
       <div class="page-panel">
         <div class="status-head">
-          <h2 class="page-title">Celery Download Status</h2>
+          <h2 class="page-title">Asynq Download Status</h2>
           <button type="button" class="btn btn-secondary" onClick={fetchStatus}>
             Refresh
           </button>
