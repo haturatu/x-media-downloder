@@ -5,6 +5,23 @@ networks:
     driver: bridge
 
 services:
+  nginx:
+    image: "nginx:alpine"
+    restart: always
+    ports:
+      - "8888:80"
+    volumes:
+      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - frontend
+    mem_limit: "256m"
+    cpus: "0.2"
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"
+
   redis:
     image: "redis:alpine"
     restart: always
@@ -78,8 +95,6 @@ services:
     build: ./x-media-downloder-front
     command: deno run -A --watch=static/,routes/ dev.ts
     restart: always
-    ports:
-      - "8888:8000"
     volumes:
       - ./x-media-downloder-front:/app
       - ./downloaded_images:/app/downloaded_images
