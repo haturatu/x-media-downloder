@@ -133,7 +133,7 @@ services:
 
   frontend:
     build: ./x-media-downloder-front
-    command: deno run -A --watch=static/,routes/ dev.ts
+    command: deno run -A --unstable main.ts
     restart: always
     volumes:
       - ./x-media-downloder-front:/app
