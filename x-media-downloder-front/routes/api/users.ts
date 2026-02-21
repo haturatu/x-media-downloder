@@ -4,8 +4,9 @@ import { FreshContext } from "$fresh/server.ts";
 import * as path from "$std/path/mod.ts";
 import { walk } from "$std/fs/walk.ts";
 import { deleteTagsForUser } from "../../utils/db.ts";
+import { getMediaRoot } from "../../utils/media_root.ts";
 
-const UPLOAD_FOLDER = "./downloaded_images";
+const UPLOAD_FOLDER = getMediaRoot();
 
 interface UserInfo {
   username: string;

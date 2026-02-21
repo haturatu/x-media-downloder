@@ -8,9 +8,10 @@ import {
   findFilesByTags,
   getTagsForFiles,
 } from "../../utils/db.ts";
+import { getMediaRoot } from "../../utils/media_root.ts";
 import type { Image } from "../../utils/types.ts";
 
-const UPLOAD_FOLDER = "./downloaded_images";
+const UPLOAD_FOLDER = getMediaRoot();
 
 interface ImageInfo {
   path: string;

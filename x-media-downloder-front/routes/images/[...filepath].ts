@@ -3,9 +3,9 @@
 import { FreshContext } from "$fresh/server.ts";
 import * as path from "$std/path/mod.ts";
 import { getMimeType } from "https://deno.land/x/hono@v3.7.4/utils/mime.ts";
+import { getMediaRoot } from "../../utils/media_root.ts";
 
-
-const UPLOAD_FOLDER = "./downloaded_images";
+const UPLOAD_FOLDER = getMediaRoot();
 
 export const handler = async (
   _req: Request,
@@ -24,7 +24,7 @@ export const handler = async (
     const readable = file.readable;
 
     const contentType = getMimeType(filepath) || "application/octet-stream";
-    
+
     return new Response(readable, {
       headers: { "Content-Type": contentType },
     });

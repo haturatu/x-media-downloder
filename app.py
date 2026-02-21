@@ -19,7 +19,7 @@ load_dotenv()
 app = Flask(__name__)
 CORS(app)
 
-UPLOAD_FOLDER = 'downloaded_images'
+UPLOAD_FOLDER = os.getenv('MEDIA_ROOT', 'downloaded_images')
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 executor = ThreadPoolExecutor(max_workers=5)
 

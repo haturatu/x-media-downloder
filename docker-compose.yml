@@ -34,6 +34,7 @@ services:
       - CELERY_BROKER_URL=redis://redis:6379/0
       - CELERY_RESULT_BACKEND=redis://redis:6379/0
       - AUTOTAGGER_URL=http://autotagger:5000/evaluate
+      - MEDIA_ROOT=/app/downloaded_images
     networks:
       - default
       - autotagger-service
@@ -89,6 +90,7 @@ services:
     environment:
       # API is now served from the app itself
       - API_BASE_URL=http://localhost:8000
+      - MEDIA_ROOT=/app/downloaded_images
       # Env vars needed for autotagging features
       - AUTOTAGGER=true
       - AUTOTAGGER_URL=http://autotagger:5000/evaluate
@@ -100,4 +102,3 @@ services:
       options:
         max-size: "5m"
         max-file: "2"
-

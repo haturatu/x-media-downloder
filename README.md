@@ -42,7 +42,15 @@ honcho start
     ```
     AUTOTAGGER=true
     AUTOTAGGER_URL=http://localhost:5000/evaluate
+    MEDIA_ROOT=downloaded_images
     ```
+
+### 保存先ディレクトリの変更
+
+`MEDIA_ROOT` で画像保存先ディレクトリを変更できます。
+
+- 例: `MEDIA_ROOT=/data/x-media`
+- 未指定時の既定値: `downloaded_images`
 
 また、「Autotagger Reload」機能を使用することで、既存のすべてのメディアに対して一括でタグ付けを行うことができます。
 

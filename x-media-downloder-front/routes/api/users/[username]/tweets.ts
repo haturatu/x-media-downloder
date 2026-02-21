@@ -3,9 +3,10 @@
 import { FreshContext } from "$fresh/server.ts";
 import * as path from "$std/path/mod.ts";
 import { getTagsForFiles } from "../../../../utils/db.ts";
+import { getMediaRoot } from "../../../../utils/media_root.ts";
 import type { Image, Tweet } from "../../../../utils/types.ts";
 
-const UPLOAD_FOLDER = "./downloaded_images";
+const UPLOAD_FOLDER = getMediaRoot();
 
 export const handler = async (
   _req: Request,
@@ -36,23 +37,27 @@ export const handler = async (
         const tweet_path = path.join(user_path, tweet_id);
         const images_in_tweet: Image[] = [];
         const image_paths_in_tweet: string[] = [];
-        
+
         for await (const img_entry of Deno.readDir(tweet_path)) {
-           if (img_entry.isFile && /\.(jpg|jpeg|png|webp|gif)$/i.test(img_entry.name)) {
-                const full_path = path.join(tweet_path, img_entry.name);
-                const relative_path = path.relative(UPLOAD_FOLDER, full_path).replaceAll("\\", "/");
-                image_paths_in_tweet.push(relative_path);
-                // Tags will be added below
-                images_in_tweet.push({ path: relative_path, tags: [] });
-           }
+          if (
+            img_entry.isFile &&
+            /\.(jpg|jpeg|png|webp|gif)$/i.test(img_entry.name)
+          ) {
+            const full_path = path.join(tweet_path, img_entry.name);
+            const relative_path = path.relative(UPLOAD_FOLDER, full_path)
+              .replaceAll("\\", "/");
+            image_paths_in_tweet.push(relative_path);
+            // Tags will be added below
+            images_in_tweet.push({ path: relative_path, tags: [] });
+          }
         }
 
         if (images_in_tweet.length > 0) {
-            const tags_map = getTagsForFiles(image_paths_in_tweet);
-            for (const img of images_in_tweet) {
-                img.tags = tags_map[img.path] || [];
-            }
-            all_tweets.push({ tweet_id, images: images_in_tweet });
+          const tags_map = getTagsForFiles(image_paths_in_tweet);
+          for (const img of images_in_tweet) {
+            img.tags = tags_map[img.path] || [];
+          }
+          all_tweets.push({ tweet_id, images: images_in_tweet });
         }
       }
     } catch (e) {
@@ -68,19 +73,18 @@ export const handler = async (
     const total_items = all_tweets.length;
     const tweets_for_page = all_tweets.slice(offset, offset + per_page);
     const total_pages = total_items > 0 ? Math.ceil(total_items / per_page) : 0;
-    
+
     const response = {
       items: tweets_for_page,
       total_items: total_items,
       per_page: per_page,
       current_page: page,
-      total_pages: total_pages
+      total_pages: total_pages,
     };
 
     return new Response(JSON.stringify(response), {
       headers: { "Content-Type": "application/json" },
     });
-
   } catch (error) {
     console.error("Error listing user tweets:", error);
     return new Response(JSON.stringify({ error: "Internal Server Error" }), {

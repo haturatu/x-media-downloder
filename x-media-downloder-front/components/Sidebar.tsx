@@ -104,9 +104,18 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
           rows={3}
           value={downloadUrls}
           onInput={(e) => setDownloadUrls(e.currentTarget.value)}
+          onKeyDown={(e) => {
+            if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+              e.preventDefault();
+              if (!downloading) {
+                void handleDownload();
+              }
+            }
+          }}
           disabled={downloading}
         >
         </textarea>
+        <p class="section-caption">Shortcut: Ctrl+Enter (Cmd+Enter on Mac)</p>
         <button
           type="button"
           id="downloadBtn"
