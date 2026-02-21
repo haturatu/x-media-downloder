@@ -5,7 +5,11 @@ import Sidebar from "../components/Sidebar.tsx";
 import AutotagMenuModal from "../islands/AutotagMenuModal.tsx";
 import ImageModal from "../islands/ImageModal.tsx";
 import type { Image } from "../utils/types.ts";
-import { allGalleryImages, selectedImage, selectedImageIndex } from "../utils/signals.ts";
+import {
+  allGalleryImages,
+  selectedImage,
+  selectedImageIndex,
+} from "../utils/signals.ts";
 
 interface LayoutProps {
   children: ComponentChildren;
@@ -15,11 +19,13 @@ interface LayoutProps {
 
 export default function Layout({ children, route }: LayoutProps) {
   const [isAutotagModalOpen, setIsAutotagModalOpen] = useState(false);
-  const [globalStatusMessage, setGlobalStatusMessage] = useState<string | null>(null);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [globalStatusMessage] = useState<string | null>(null);
+  const [tagSearch, setTagSearch] = useState("");
 
   const handleShowAutotagStatus = () => {
     if (IS_BROWSER) {
-      window.location.href = "/autotag-status";
+      globalThis.location.href = "/autotag-status";
     }
   };
 
@@ -40,30 +46,106 @@ export default function Layout({ children, route }: LayoutProps) {
     }
   };
 
-  const isActive = (path: string) => path === route ? 'active' : '';
+  const handleImageDelete = (deletedPath: string, index: number) => {
+    const prevImages = allGalleryImages.value;
+    const updatedImages = prevImages.filter((img) => img.path !== deletedPath);
+    allGalleryImages.value = updatedImages;
+
+    if (selectedImage.value?.path !== deletedPath) {
+      return;
+    }
+
+    if (updatedImages.length === 0) {
+      selectedImage.value = null;
+      selectedImageIndex.value = -1;
+      return;
+    }
+
+    const nextIndex = Math.min(index, updatedImages.length - 1);
+    selectedImage.value = updatedImages[nextIndex];
+    selectedImageIndex.value = nextIndex;
+  };
+
+  const isActive = (path: string) => {
+    if (path === "/") return route === "/" ? "active" : "";
+    return route.startsWith(path) ? "active" : "";
+  };
+
+  const handleTagSearch = (e: Event) => {
+    e.preventDefault();
+    const query = tagSearch.trim();
+    if (!query || !IS_BROWSER) return;
+    globalThis.location.href = `/tags/${encodeURIComponent(query)}`;
+  };
 
   return (
     <div class="container">
-      <Sidebar />
+      <div
+        class={`sidebar-backdrop ${isSidebarOpen ? "visible" : ""}`}
+        onClick={() => setIsSidebarOpen(false)}
+      />
+      <div class={`sidebar-shell ${isSidebarOpen ? "open" : ""}`}>
+        <Sidebar onNavigate={() => setIsSidebarOpen(false)} />
+      </div>
 
       <main class="main-content">
         <header class="header">
-          <div class="header-title">
-             <h1>X Gallery</h1>
-            <a href="/" class={`header-link ${isActive('/')}`}>🏠 Home</a>
-            <a href="/users" class={`header-link ${isActive('/users')}`}>👥 Users</a>
-            <a href="/tags" class={`header-link ${isActive('/tags')}`}>🏷️ Tags</a>
+          <div class="header-brand">
+            <button
+              type="button"
+              class="mobile-menu-btn"
+              onClick={() => setIsSidebarOpen((prev) => !prev)}
+              aria-label="Toggle sidebar"
+            >
+              ☰
+            </button>
+            <h1>X Gallery</h1>
           </div>
+
+          <div class="header-title">
+            <a
+              href="/"
+              class={`header-link ${isActive("/")}`}
+              onClick={() => setIsSidebarOpen(false)}
+            >
+              Home
+            </a>
+            <a
+              href="/users"
+              class={`header-link ${isActive("/users")}`}
+              onClick={() => setIsSidebarOpen(false)}
+            >
+              Users
+            </a>
+            <a
+              href="/tags"
+              class={`header-link ${isActive("/tags")}`}
+              onClick={() => setIsSidebarOpen(false)}
+            >
+              Tags
+            </a>
+            <a
+              href="/download-status"
+              class={`header-link ${isActive("/download-status")}`}
+              onClick={() => setIsSidebarOpen(false)}
+            >
+              Tasks
+            </a>
+          </div>
+
           <div class="header-actions">
-            <form class="tag-search-form">
-                <input
+            <form class="tag-search-form" onSubmit={handleTagSearch}>
+              <input
                 type="search"
-                placeholder="Search images by tags..."
-                />
+                value={tagSearch}
+                placeholder="Search by tag"
+                onInput={(e) => setTagSearch(e.currentTarget.value)}
+              />
             </form>
             <button
+              type="button"
               onClick={() => setIsAutotagModalOpen(true)}
-              class="header-btn"
+              class="btn btn-secondary"
             >
               Autotagger
             </button>
@@ -91,6 +173,7 @@ export default function Layout({ children, route }: LayoutProps) {
         initialImage={selectedImage.value}
         allImages={allGalleryImages.value}
         onImageUpdate={handleImageUpdate}
+        onImageDelete={handleImageDelete}
       />
     </div>
   );

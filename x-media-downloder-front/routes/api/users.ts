@@ -2,6 +2,8 @@
 
 import { FreshContext } from "$fresh/server.ts";
 import * as path from "$std/path/mod.ts";
+import { walk } from "$std/fs/walk.ts";
+import { deleteTagsForUser } from "../../utils/db.ts";
 
 const UPLOAD_FOLDER = "./downloaded_images";
 
@@ -10,12 +12,96 @@ interface UserInfo {
   tweet_count: number;
 }
 
-export const handler = async (_req: Request, _ctx: FreshContext): Promise<Response> => {
+interface DeleteUserRequest {
+  username: string;
+}
+
+export const handler = async (
+  _req: Request,
+  _ctx: FreshContext,
+): Promise<Response> => {
+  if (_req.method === "DELETE") {
+    try {
+      const body: DeleteUserRequest = await _req.json();
+      const username = body.username?.trim();
+      if (!username) {
+        return new Response(
+          JSON.stringify({ success: false, message: "username is required" }),
+          { status: 400, headers: { "Content-Type": "application/json" } },
+        );
+      }
+
+      if (username.includes("/") || username.includes("\\")) {
+        return new Response(
+          JSON.stringify({ success: false, message: "Invalid username" }),
+          { status: 400, headers: { "Content-Type": "application/json" } },
+        );
+      }
+
+      const uploadRoot = path.resolve(UPLOAD_FOLDER);
+      const userPath = path.resolve(path.join(UPLOAD_FOLDER, username));
+      if (!userPath.startsWith(uploadRoot + path.SEP)) {
+        return new Response(
+          JSON.stringify({ success: false, message: "Invalid username path" }),
+          { status: 400, headers: { "Content-Type": "application/json" } },
+        );
+      }
+
+      let imageCount = 0;
+      try {
+        for await (
+          const _entry of walk(userPath, {
+            includeDirs: false,
+            exts: [".jpg", ".jpeg", ".png", ".webp", ".gif"],
+          })
+        ) {
+          imageCount++;
+        }
+      } catch {
+        // Count is best-effort only.
+      }
+
+      try {
+        await Deno.remove(userPath, { recursive: true });
+      } catch (e) {
+        if (e instanceof Deno.errors.NotFound) {
+          return new Response(
+            JSON.stringify({ success: false, message: "User not found" }),
+            { status: 404, headers: { "Content-Type": "application/json" } },
+          );
+        }
+        throw e;
+      }
+
+      deleteTagsForUser(username);
+
+      return new Response(
+        JSON.stringify({
+          success: true,
+          message: `Deleted user '${username}' and ${imageCount} images`,
+          username,
+          deleted_images: imageCount,
+        }),
+        { headers: { "Content-Type": "application/json" } },
+      );
+    } catch (error) {
+      console.error("Error deleting user:", error);
+      return new Response(JSON.stringify({ error: "Internal Server Error" }), {
+        status: 500,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+  }
+
+  if (_req.method !== "GET") {
+    return new Response(null, { status: 405 });
+  }
+
   try {
     const url = new URL(_req.url);
     const page = parseInt(url.searchParams.get("page") || "1");
     const per_page = parseInt(url.searchParams.get("per_page") || "100");
-    const search_query = url.searchParams.get("q")?.toLowerCase() || '';
+    const search_query = url.searchParams.get("q")?.toLowerCase() || "";
 
     const offset = (page - 1) * per_page;
 
@@ -23,8 +109,10 @@ export const handler = async (_req: Request, _ctx: FreshContext): Promise<Respon
     try {
       for await (const userEntry of Deno.readDir(UPLOAD_FOLDER)) {
         if (!userEntry.isDirectory) continue;
-        if (search_query && !userEntry.name.toLowerCase().includes(search_query)) continue;
-        
+        if (
+          search_query && !userEntry.name.toLowerCase().includes(search_query)
+        ) continue;
+
         const user_path = path.join(UPLOAD_FOLDER, userEntry.name);
         let tweet_count = 0;
         try {
@@ -36,7 +124,7 @@ export const handler = async (_req: Request, _ctx: FreshContext): Promise<Respon
         } catch {
           // Ignore errors reading subdirectories, maybe permissions issue
         }
-        
+
         if (tweet_count > 0) {
           all_users.push({ username: userEntry.name, tweet_count });
         }
@@ -55,19 +143,18 @@ export const handler = async (_req: Request, _ctx: FreshContext): Promise<Respon
     const total_items = all_users.length;
     const users_for_page = all_users.slice(offset, offset + per_page);
     const total_pages = total_items > 0 ? Math.ceil(total_items / per_page) : 0;
-    
+
     const response = {
       items: users_for_page,
       total_items: total_items,
       per_page: per_page,
       current_page: page,
-      total_pages: total_pages
+      total_pages: total_pages,
     };
 
     return new Response(JSON.stringify(response), {
       headers: { "Content-Type": "application/json" },
     });
-
   } catch (error) {
     console.error("Error listing users:", error);
     return new Response(JSON.stringify({ error: "Internal Server Error" }), {

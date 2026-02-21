@@ -1,12 +1,12 @@
-import { useState, useEffect } from "preact/hooks";
-import type { User, Tag, PagedResponse } from "../utils/types.ts";
+import { useEffect, useState } from "preact/hooks";
+import type { PagedResponse, Tag, User } from "../utils/types.ts";
 import { getApiBaseUrl } from "../utils/api.ts";
 
 interface SidebarProps {
-  // Props for active state or callbacks if needed
+  onNavigate?: () => void;
 }
 
-export default function Sidebar({}: SidebarProps) {
+export default function Sidebar({ onNavigate }: SidebarProps) {
   const [activeTab, setActiveTab] = useState<"users" | "tags">("users");
   const [userSearchQuery, setUserSearchQuery] = useState<string>("");
   const [tagSearchQuery, setTagSearchQuery] = useState<string>("");
@@ -97,6 +97,7 @@ export default function Sidebar({}: SidebarProps) {
     <aside class="sidebar">
       <div class="download-section">
         <h2>Downloader</h2>
+        <p class="section-caption">Tweet/X URLを貼り付けて一括取得</p>
         <textarea
           id="tweetUrls"
           placeholder="Enter Tweet URLs..."
@@ -104,26 +105,34 @@ export default function Sidebar({}: SidebarProps) {
           value={downloadUrls}
           onInput={(e) => setDownloadUrls(e.currentTarget.value)}
           disabled={downloading}
-        ></textarea>
+        >
+        </textarea>
         <button
+          type="button"
           id="downloadBtn"
           onClick={handleDownload}
           disabled={downloading}
+          class="btn btn-primary"
         >
           {downloading ? "Queuing..." : "Download Media"}
         </button>
-        {statusMessage && <p style={{fontSize: '0.8rem', color: '#888', marginTop: '0.5rem'}}>{statusMessage}</p>}
+        <a href="/download-status" class="download-status-link">
+          View Celery Status
+        </a>
+        {statusMessage && <p class="muted-message">{statusMessage}</p>}
       </div>
 
       <nav class="sidebar-nav">
         <div class="sidebar-tabs">
           <button
+            type="button"
             class={`sidebar-tab-btn ${activeTab === "users" ? "active" : ""}`}
             onClick={() => setActiveTab("users")}
           >
             Users
           </button>
           <button
+            type="button"
             class={`sidebar-tab-btn ${activeTab === "tags" ? "active" : ""}`}
             onClick={() => setActiveTab("tags")}
           >
@@ -144,7 +153,9 @@ export default function Sidebar({}: SidebarProps) {
               {users.map((user) => (
                 <li key={user.username}>
                   <div class="user-item-link">
-                    <a href={`/users/${user.username}`}>{user.username}</a>
+                    <a href={`/users/${user.username}`} onClick={onNavigate}>
+                      {user.username}
+                    </a>
                     <span class="item-count">{user.tweet_count}</span>
                   </div>
                 </li>
@@ -163,8 +174,10 @@ export default function Sidebar({}: SidebarProps) {
             <ul class="tag-list">
               {tags.map((tag) => (
                 <li key={tag.tag}>
-                   <div class="tag-item">
-                    <a href={`/tags/${tag.tag}`}>{tag.tag}</a>
+                  <div class="tag-item">
+                    <a href={`/tags/${tag.tag}`} onClick={onNavigate}>
+                      {tag.tag}
+                    </a>
                     <span class="item-count">{tag.count}</span>
                   </div>
                 </li>

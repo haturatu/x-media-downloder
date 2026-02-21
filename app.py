@@ -35,8 +35,8 @@ TASK_STORE = {
 
 # --- Celery Configuration ---
 app.config.update(
-    broker_url='sqla+sqlite:///celery_broker.db',
-    result_backend='db+sqlite:///celery_results.db'
+    broker_url=os.getenv('CELERY_BROKER_URL', 'sqla+sqlite:///celery_broker.db'),
+    result_backend=os.getenv('CELERY_RESULT_BACKEND', 'db+sqlite:///celery_results.db')
 )
 
 
@@ -147,15 +147,24 @@ def download_image_task(image_url, tweet_dir, index, tweet_id):
     except Exception as e:
         return {"status": "failed", "reason": str(e)}
 
-def download_all_images(image_urls, tweet_url, username):
+def download_all_images(image_urls, tweet_url, username, progress_callback=None):
     if not image_urls: return {"success": False, "message": "No images found"}
     user_dir = os.path.join(UPLOAD_FOLDER, username)
     tweet_id = tweet_url.split('/')[-1].split('?')[0]
     tweet_dir = os.path.join(user_dir, tweet_id)
     os.makedirs(tweet_dir, exist_ok=True)
     
-    tasks = [executor.submit(download_image_task, url, tweet_dir, i, tweet_id) for i, url in enumerate(image_urls, 1)]
-    results = [task.result() for task in tasks]
+    futures = [executor.submit(download_image_task, url, tweet_dir, i, tweet_id) for i, url in enumerate(image_urls, 1)]
+    results = []
+    total_count = len(futures)
+    completed_count = 0
+    
+    for future in as_completed(futures):
+        result = future.result()
+        results.append(result)
+        completed_count += 1
+        if progress_callback:
+            progress_callback(completed_count, total_count, result)
     
     successes = [r for r in results if r['status'] == 'success']
     skipped = [r for r in results if r['status'] == 'skipped']
@@ -171,8 +180,8 @@ def download_all_images(image_urls, tweet_url, username):
     }
 
 # --- Celery Tasks ---
-@celery.task(name='tasks.download_tweet_media')
-def download_tweet_media_task(tweet_url):
+@celery.task(bind=True, name='tasks.download_tweet_media')
+def download_tweet_media_task(self, tweet_url):
     """Celery task to download all media from a single tweet URL."""
     print(f"Starting download for: {tweet_url}")
     try:
@@ -182,7 +191,33 @@ def download_tweet_media_task(tweet_url):
             print(f"No images found for {tweet_url}")
             return {"url": tweet_url, "success": False, "message": "No images found"}
 
-        result = download_all_images(image_urls, tweet_url, username)
+        total_images = len(image_urls)
+        success_count = 0
+        skipped_count = 0
+        failure_count = 0
+
+        self.update_state(state='PROGRESS', meta={
+            'current': 0,
+            'total': total_images,
+            'status': f'Starting download for {username}...'
+        })
+
+        def on_progress(completed_count, total_count, latest_result):
+            nonlocal success_count, skipped_count, failure_count
+            if latest_result.get('status') == 'success':
+                success_count += 1
+            elif latest_result.get('status') == 'skipped':
+                skipped_count += 1
+            elif latest_result.get('status') == 'failed':
+                failure_count += 1
+
+            self.update_state(state='PROGRESS', meta={
+                'current': completed_count,
+                'total': total_count,
+                'status': f"saved:{success_count} skipped:{skipped_count} failed:{failure_count}"
+            })
+
+        result = download_all_images(image_urls, tweet_url, username, progress_callback=on_progress)
         print(f"Download result for {tweet_url}: {result['downloaded_count']} downloaded, {result['skipped_count']} skipped.")
         return {"url": tweet_url, **result}
     except Exception as e:

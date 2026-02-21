@@ -12,6 +12,7 @@ import * as $api_tags from "./routes/api/tags.ts";
 import * as $api_users from "./routes/api/users.ts";
 import * as $api_users_username_tweets from "./routes/api/users/[username]/tweets.ts";
 import * as $autotag_status from "./routes/autotag-status.tsx";
+import * as $download_status from "./routes/download-status.tsx";
 import * as $images_filepath_ from "./routes/images/[...filepath].ts";
 import * as $index from "./routes/index.tsx";
 import * as $tags from "./routes/tags.tsx";
@@ -20,6 +21,7 @@ import * as $users from "./routes/users.tsx";
 import * as $users_username_ from "./routes/users/[username].tsx";
 import * as $AutotagMenuModal from "./islands/AutotagMenuModal.tsx";
 import * as $AutotagStatusPage from "./islands/AutotagStatusPage.tsx";
+import * as $DownloadStatusPage from "./islands/DownloadStatusPage.tsx";
 import * as $HomePage from "./islands/HomePage.tsx";
 import * as $ImageModal from "./islands/ImageModal.tsx";
 import * as $Layout from "./islands/Layout.tsx";
@@ -41,6 +43,7 @@ const manifest = {
     "./routes/api/users.ts": $api_users,
     "./routes/api/users/[username]/tweets.ts": $api_users_username_tweets,
     "./routes/autotag-status.tsx": $autotag_status,
+    "./routes/download-status.tsx": $download_status,
     "./routes/images/[...filepath].ts": $images_filepath_,
     "./routes/index.tsx": $index,
     "./routes/tags.tsx": $tags,
@@ -51,6 +54,7 @@ const manifest = {
   islands: {
     "./islands/AutotagMenuModal.tsx": $AutotagMenuModal,
     "./islands/AutotagStatusPage.tsx": $AutotagStatusPage,
+    "./islands/DownloadStatusPage.tsx": $DownloadStatusPage,
     "./islands/HomePage.tsx": $HomePage,
     "./islands/ImageModal.tsx": $ImageModal,
     "./islands/Layout.tsx": $Layout,

@@ -1,4 +1,4 @@
-import { useState, useEffect } from "preact/hooks";
+import { useEffect, useState } from "preact/hooks";
 import { IS_BROWSER } from "$fresh/runtime.ts";
 import type { Image } from "../utils/types.ts";
 import { getApiBaseUrl } from "../utils/api.ts";
@@ -9,6 +9,7 @@ interface ImageModalProps {
   initialImage: Image | null;
   allImages: Image[]; // All images in the current gallery for navigation
   onImageUpdate: (updatedImage: Image, index: number) => void; // Callback when an image's tags are updated
+  onImageDelete: (deletedPath: string, index: number) => void;
 }
 
 export default function ImageModal({
@@ -17,12 +18,16 @@ export default function ImageModal({
   initialImage,
   allImages,
   onImageUpdate,
+  onImageDelete,
 }: ImageModalProps) {
   const [currentImage, setCurrentImage] = useState<Image | null>(initialImage);
   const [currentIndex, setCurrentIndex] = useState(
-    initialImage ? allImages.findIndex((img) => img.path === initialImage.path) : -1,
+    initialImage
+      ? allImages.findIndex((img) => img.path === initialImage.path)
+      : -1,
   );
   const [retagging, setRetagging] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [retagStatus, setRetagStatus] = useState<string | null>(null);
 
   const API_BASE_URL = getApiBaseUrl();
@@ -31,7 +36,9 @@ export default function ImageModal({
   useEffect(() => {
     setCurrentImage(initialImage);
     setCurrentIndex(
-      initialImage ? allImages.findIndex((img) => img.path === initialImage.path) : -1,
+      initialImage
+        ? allImages.findIndex((img) => img.path === initialImage.path)
+        : -1,
     );
     // Reset status when a new image is opened
     setRetagStatus(null);
@@ -40,7 +47,8 @@ export default function ImageModal({
   const changeImage = (direction: -1 | 1) => {
     if (!allImages || allImages.length === 0) return;
 
-    const newIndex = (currentIndex + direction + allImages.length) % allImages.length;
+    const newIndex = (currentIndex + direction + allImages.length) %
+      allImages.length;
     setCurrentImage(allImages[newIndex]);
     setCurrentIndex(newIndex);
     setRetagStatus(null); // Clear retag status on image change
@@ -76,6 +84,32 @@ export default function ImageModal({
     }
   };
 
+  const handleDelete = async () => {
+    if (!IS_BROWSER || !currentImage || deleting) return;
+    if (!globalThis.confirm("Delete this image?")) return;
+
+    setDeleting(true);
+    setRetagStatus("Deleting image...");
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/images`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ filepath: currentImage.path }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.message || "Failed to delete image");
+      }
+      onImageDelete(currentImage.path, currentIndex);
+      setRetagStatus("Image deleted.");
+    } catch (error) {
+      console.error("Delete image error:", error);
+      setRetagStatus(`Error: ${error.message}`);
+    } finally {
+      setDeleting(false);
+    }
+  };
+
   // Keyboard navigation
   useEffect(() => {
     if (!IS_BROWSER || !isOpen) return;
@@ -102,33 +136,58 @@ export default function ImageModal({
         class="modal-content"
         onClick={(e) => e.stopPropagation()} // Prevent closing when clicking inside content
       >
-        <button onClick={onClose} class="modal-close">&times;</button>
+        <button type="button" onClick={onClose} class="modal-close">
+          &times;
+        </button>
 
-        <button onClick={() => changeImage(-1)} class="modal-nav prev">&#10094;</button>
+        <button
+          type="button"
+          onClick={() => changeImage(-1)}
+          class="modal-nav prev"
+        >
+          &#10094;
+        </button>
 
         <img
           src={`/images/${currentImage.path}`}
           alt="Full size media"
           onClick={() => changeImage(1)} // Click on image to go next
         />
-        
-        <button onClick={() => changeImage(1)} class="modal-nav next">&#10095;</button>
+
+        <button
+          type="button"
+          onClick={() => changeImage(1)}
+          class="modal-nav next"
+        >
+          &#10095;
+        </button>
 
         <div class="modal-tags">
           <p>
-            Tags: {currentImage.tags?.map((tag) => tag.tag).join(", ") || "No tags yet."}
+            Tags: {currentImage.tags?.map((tag) => tag.tag).join(", ") ||
+              "No tags yet."}
           </p>
-          {currentImage.tags?.length === 0 && (
-             <button
-              onClick={handleRetag}
-              disabled={retagging}
-              class="header-btn" // Re-using button style
-              style={{marginTop: '0.5rem', backgroundColor: retagging ? '#444' : '#007bff'}}
+          <div class="modal-actions">
+            {currentImage.tags?.length === 0 && (
+              <button
+                type="button"
+                onClick={handleRetag}
+                disabled={retagging || deleting}
+                class="btn btn-primary modal-action-btn"
+              >
+                {retagging ? "Generating..." : "Generate Tags"}
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={handleDelete}
+              disabled={retagging || deleting}
+              class="btn btn-danger modal-action-btn"
             >
-              {retagging ? "Generating..." : "Generate Tags"}
+              {deleting ? "Deleting..." : "Delete Image"}
             </button>
-          )}
-          {retagStatus && <p style={{fontSize: '0.8rem', color: '#888', marginTop: '0.5rem'}}>{retagStatus}</p>}
+          </div>
+          {retagStatus && <p class="muted-message">{retagStatus}</p>}
         </div>
       </div>
     </div>

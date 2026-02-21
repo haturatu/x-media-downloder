@@ -13,7 +13,8 @@ export default function ImageGrid({ images, onImageClick }: ImageGridProps) {
   return (
     <div class="image-grid">
       {images.map((image, index) => (
-        <div
+        <button
+          type="button"
           key={image.path}
           class="img-container"
           onClick={() => onImageClick && onImageClick(image, index)}
@@ -26,7 +27,7 @@ export default function ImageGrid({ images, onImageClick }: ImageGridProps) {
           <div class="tags-overlay">
             {image.tags?.map((tag) => tag.tag).join(", ") || "No Tags"}
           </div>
-        </div>
+        </button>
       ))}
     </div>
   );

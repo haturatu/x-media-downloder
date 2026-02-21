@@ -6,7 +6,11 @@ import type { Image, PagedResponse } from "../utils/types.ts";
 import ImageGrid from "../components/ImageGrid.tsx";
 import Pagination from "../components/Pagination.tsx";
 import { getApiBaseUrl } from "../utils/api.ts";
-import { allGalleryImages, selectedImage, selectedImageIndex } from "../utils/signals.ts";
+import {
+  allGalleryImages,
+  selectedImage,
+  selectedImageIndex,
+} from "../utils/signals.ts";
 
 export interface HomePageProps {
   images: Image[];
@@ -15,10 +19,16 @@ export interface HomePageProps {
 }
 
 export default function HomePage(props: HomePageProps) {
-  const { images: initialImages, currentPage: initialCurrentPage, totalPages: initialTotalPages } = props;
+  const {
+    images: initialImages,
+    currentPage: initialCurrentPage,
+    totalPages: initialTotalPages,
+  } = props;
 
   const [images, setImages] = useState<Image[]>(initialImages || []);
-  const [currentPage, setCurrentPage] = useState<number>(initialCurrentPage || 1);
+  const [currentPage, setCurrentPage] = useState<number>(
+    initialCurrentPage || 1,
+  );
   const [totalPages, setTotalPages] = useState<number>(initialTotalPages || 0);
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
@@ -34,23 +44,25 @@ export default function HomePage(props: HomePageProps) {
     if (currentPage !== initialCurrentPage) {
       setLoading(true);
       setError(null);
-      fetch(`${API_BASE_URL}/api/images?sort=latest&page=${currentPage}&per_page=100`)
-        .then(res => {
-            if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
-            return res.json();
+      fetch(
+        `${API_BASE_URL}/api/images?sort=latest&page=${currentPage}&per_page=100`,
+      )
+        .then((res) => {
+          if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
+          return res.json();
         })
         .then((data: PagedResponse<Image>) => {
           setImages(data.items || []);
           setTotalPages(data.total_pages || 0);
         })
-        .catch(err => setError(err.message))
+        .catch((err) => setError(err.message))
         .finally(() => setLoading(false));
     }
   }, [currentPage, initialCurrentPage]);
 
   const handlePageChange = (page: number) => {
     setCurrentPage(page);
-    window.history.pushState({}, "", `/?page=${page}`);
+    globalThis.history.pushState({}, "", `/?page=${page}`);
   };
 
   const handleImageClick = (image: Image, index: number) => {
@@ -63,12 +75,12 @@ export default function HomePage(props: HomePageProps) {
       <Head>
         <title>Home - X Media Downloader</title>
       </Head>
-      <div class="p-4">
-        <h2 class="text-2xl font-bold mb-4">Latest Posts</h2>
+      <div class="page-panel">
+        <h2 class="page-title">Latest Posts</h2>
         {loading && <p>Loading images...</p>}
-        {error && <p class="text-red-500">Error: {error}</p>}
+        {error && <p class="error-text">Error: {error}</p>}
         {images.length === 0 && !loading && !error && (
-          <p class="text-gray-400">No images found. Start by downloading some!</p>
+          <p class="info-text">No images found. Start by downloading some!</p>
         )}
 
         <ImageGrid images={images} onImageClick={handleImageClick} />

@@ -23,7 +23,7 @@ export default function AutotagStatusPage() {
     if (!IS_BROWSER) return;
     try {
       // Don't set loading to true on polls
-      // setLoading(true); 
+      // setLoading(true);
       setError(null);
       const res = await fetch(`${API_BASE_URL}/api/autotag/status`);
       if (!res.ok) {
@@ -43,7 +43,11 @@ export default function AutotagStatusPage() {
     fetchStatus(); // Initial fetch
 
     const interval = setInterval(() => {
-      if (status && (status.state === "SUCCESS" || status.state === "FAILURE" || status.state === "NOT_FOUND")) {
+      if (
+        status &&
+        (status.state === "SUCCESS" || status.state === "FAILURE" ||
+          status.state === "NOT_FOUND")
+      ) {
         clearInterval(interval); // Stop polling if task is complete or failed
         return;
       }
@@ -54,35 +58,44 @@ export default function AutotagStatusPage() {
   }, [status]); // Re-run effect if status changes to check for completion
 
   let progressPercent = 0;
-  if (status && status.total && status.total > 0 && status.current !== undefined) {
+  if (
+    status && status.total && status.total > 0 && status.current !== undefined
+  ) {
     progressPercent = (status.current / status.total) * 100;
   } else if (status?.state === "SUCCESS") {
     progressPercent = 100;
   }
 
-  const progressText = (status?.state === "PROGRESS" || status?.state === "SUCCESS")
-    ? `${status.current} / ${status.total}`
-    : "N/A";
+  const progressText =
+    (status?.state === "PROGRESS" || status?.state === "SUCCESS")
+      ? `${status.current} / ${status.total}`
+      : "N/A";
 
   return (
     <>
       <Head>
         <title>Autotagger Status - X Media Downloader</title>
       </Head>
-      <div class="p-4">
-        <h2 class="text-2xl font-bold mb-4">Autotagging Task Status</h2>
+      <div class="page-panel">
+        <h2 class="page-title">Autotagging Task Status</h2>
         {loading && <p>Loading status...</p>}
-        {error && <p class="text-red-500">Error: {error}</p>}
+        {error && <p class="error-text">Error: {error}</p>}
 
         {status && (
-          <div class="bg-gray-800 p-6 rounded-lg shadow-lg">
-            <p class="text-lg mb-2"><strong>State:</strong> {status.state}</p>
-            <p class="text-md mb-4"><strong>Details:</strong> {status.status}</p>
+          <div class="status-card">
+            <p>
+              <strong>State:</strong> {status.state}
+            </p>
+            <p>
+              <strong>Details:</strong> {status.status}
+            </p>
 
-            <p class="text-sm"><strong>Progress:</strong> {progressText}</p>
-            <div class="w-full bg-gray-700 rounded-full h-6 mb-4">
+            <p>
+              <strong>Progress:</strong> {progressText}
+            </p>
+            <div class="progress-track">
               <div
-                class="bg-blue-600 h-6 rounded-full text-center text-white text-sm leading-6 transition-all duration-500 ease-out"
+                class="progress-bar"
                 style={{ width: `${progressPercent}%` }}
               >
                 {Math.round(progressPercent)}%
