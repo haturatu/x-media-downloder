@@ -36,6 +36,7 @@ const (
 	taskTypeAutotagUntagged = "xmd:autotag_untagged"
 	taskTypeDeleteUser      = "xmd:delete_user"
 	taskTypeDeleteImage     = "xmd:delete_image"
+	taskTypeDeleteImages    = "xmd:delete_images"
 	taskTypeRetagImage      = "xmd:retag_image"
 
 	taskListKey     = "xmd:download_task_ids"
@@ -95,6 +96,11 @@ type deleteUserTaskPayload struct {
 type deleteImageTaskPayload struct {
 	TaskID   string `json:"task_id"`
 	Filepath string `json:"filepath"`
+}
+
+type deleteImagesTaskPayload struct {
+	TaskID    string   `json:"task_id"`
+	Filepaths []string `json:"filepaths"`
 }
 
 type retagImageTaskPayload struct {
@@ -245,6 +251,7 @@ func runAPI(st *appState) {
 	mux.HandleFunc("/api/users", st.handleUsers)
 	mux.HandleFunc("/api/users/", st.handleUsersSubroutes)
 	mux.HandleFunc("/api/images", st.handleImages)
+	mux.HandleFunc("/api/images/bulk-delete", st.handleImagesBulkDelete)
 	mux.HandleFunc("/api/images/retag", st.handleImagesRetag)
 	mux.HandleFunc("/api/tasks/status", st.handleTaskStatus)
 
@@ -273,6 +280,7 @@ func runWorker(st *appState) {
 	mux.HandleFunc(taskTypeAutotagUntagged, st.processAutotagUntaggedTask)
 	mux.HandleFunc(taskTypeDeleteUser, st.processDeleteUserTask)
 	mux.HandleFunc(taskTypeDeleteImage, st.processDeleteImageTask)
+	mux.HandleFunc(taskTypeDeleteImages, st.processDeleteImagesTask)
 	mux.HandleFunc(taskTypeRetagImage, st.processRetagImageTask)
 
 	logger.Info("queue worker started",
@@ -1069,6 +1077,71 @@ func (st *appState) handleImages(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (st *appState) handleImagesBulkDelete(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	var body struct {
+		Filepaths []string `json:"filepaths"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || len(body.Filepaths) == 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": "filepaths is required"})
+		return
+	}
+
+	uniq := make(map[string]struct{}, len(body.Filepaths))
+	filepaths := make([]string, 0, len(body.Filepaths))
+	for _, raw := range body.Filepaths {
+		rel := strings.TrimSpace(strings.ReplaceAll(raw, "\\", "/"))
+		if rel == "" {
+			continue
+		}
+		if _, exists := uniq[rel]; exists {
+			continue
+		}
+		uniq[rel] = struct{}{}
+		filepaths = append(filepaths, rel)
+	}
+	if len(filepaths) == 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": "filepaths is required"})
+		return
+	}
+
+	taskID := uuid.NewString()
+	payload := deleteImagesTaskPayload{TaskID: taskID, Filepaths: filepaths}
+	b, _ := json.Marshal(payload)
+	task := asynq.NewTask(taskTypeDeleteImages, b)
+	_, err := st.asynqCli.Enqueue(task,
+		asynq.Queue(st.cfg.interactiveQueue),
+		asynq.TaskID(taskID),
+		asynq.MaxRetry(0),
+		asynq.Timeout(30*time.Minute),
+	)
+	if err != nil {
+		logger.Error("failed to enqueue bulk delete image task",
+			"task_type", taskTypeDeleteImages,
+			"task_id", taskID,
+			"count", len(filepaths),
+			"error", err,
+		)
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "failed to queue task"})
+		return
+	}
+	setTaskState(r.Context(), st.redis, taskID, "PENDING", map[string]any{
+		"message": fmt.Sprintf("Bulk delete task queued (%d images)", len(filepaths)),
+		"total":   len(filepaths),
+	})
+	logger.Info("bulk delete image task queued", "task_id", taskID, "count", len(filepaths))
+	writeJSON(w, http.StatusAccepted, map[string]any{
+		"success":      true,
+		"queued":       true,
+		"task_id":      taskID,
+		"queued_count": len(filepaths),
+		"message":      "Bulk delete image task queued",
+	})
+}
+
 func (st *appState) handleImagesGet(w http.ResponseWriter, r *http.Request) {
 	sortMode := strings.TrimSpace(r.URL.Query().Get("sort"))
 	if sortMode == "" {
@@ -1542,6 +1615,93 @@ func (st *appState) processDeleteImageTask(ctx context.Context, t *asynq.Task) e
 		"message":  "Image deleted",
 		"filepath": rel,
 	})
+	return nil
+}
+
+func (st *appState) processDeleteImagesTask(ctx context.Context, t *asynq.Task) error {
+	var payload deleteImagesTaskPayload
+	if err := json.Unmarshal(t.Payload(), &payload); err != nil {
+		return err
+	}
+	taskID := payload.TaskID
+	if taskID == "" {
+		taskID = uuid.NewString()
+	}
+	if len(payload.Filepaths) == 0 {
+		err := errors.New("filepaths is required")
+		setTaskState(ctx, st.redis, taskID, "FAILURE", map[string]any{"message": err.Error()})
+		return err
+	}
+
+	uniq := make(map[string]struct{}, len(payload.Filepaths))
+	filepaths := make([]string, 0, len(payload.Filepaths))
+	for _, raw := range payload.Filepaths {
+		rel := strings.TrimSpace(strings.ReplaceAll(raw, "\\", "/"))
+		if rel == "" {
+			continue
+		}
+		if _, exists := uniq[rel]; exists {
+			continue
+		}
+		uniq[rel] = struct{}{}
+		filepaths = append(filepaths, rel)
+	}
+	if len(filepaths) == 0 {
+		err := errors.New("filepaths is required")
+		setTaskState(ctx, st.redis, taskID, "FAILURE", map[string]any{"message": err.Error()})
+		return err
+	}
+
+	deleted := 0
+	notFound := 0
+	failed := 0
+	total := len(filepaths)
+	setTaskState(ctx, st.redis, taskID, "PROGRESS", map[string]any{
+		"current": 0,
+		"total":   total,
+		"message": "Deleting images...",
+	})
+
+	for i, rel := range filepaths {
+		full, err := resolvePathUnderRoot(st.cfg.mediaRoot, rel)
+		if err != nil {
+			failed++
+		} else {
+			if err := os.Remove(full); err != nil {
+				if errors.Is(err, os.ErrNotExist) {
+					notFound++
+				} else {
+					failed++
+				}
+			} else {
+				deleted++
+				_ = st.store.DeleteTagsForFile(rel)
+				_ = cleanupEmptyParents(full, st.cfg.mediaRoot)
+			}
+		}
+
+		if i%20 == 0 || i == total-1 {
+			setTaskState(ctx, st.redis, taskID, "PROGRESS", map[string]any{
+				"current": i + 1,
+				"total":   total,
+				"status":  fmt.Sprintf("deleted:%d not_found:%d failed:%d", deleted, notFound, failed),
+			})
+		}
+	}
+
+	result := map[string]any{
+		"success":         true,
+		"message":         fmt.Sprintf("Bulk delete completed. deleted:%d not_found:%d failed:%d", deleted, notFound, failed),
+		"deleted_count":   deleted,
+		"not_found_count": notFound,
+		"failed_count":    failed,
+		"total":           total,
+	}
+	if deleted == 0 && failed > 0 {
+		setTaskState(ctx, st.redis, taskID, "FAILURE", result)
+		return errors.New("bulk delete failed")
+	}
+	setTaskState(ctx, st.redis, taskID, "SUCCESS", result)
 	return nil
 }
 

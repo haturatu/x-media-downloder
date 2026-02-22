@@ -144,21 +144,6 @@ export default function TagImagesPage(props: TagImagesProps) {
     throw new Error("Delete task timeout");
   };
 
-  const deleteImage = async (filepath: string) => {
-    const res = await fetch(`${API_BASE_URL}/api/images`, {
-      method: "DELETE",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ filepath }),
-    });
-    const data = await res.json();
-    if (!res.ok || !data.success) {
-      throw new Error(data.message || `Failed to queue delete: ${filepath}`);
-    }
-    if (data.task_id) {
-      await waitForTask(data.task_id);
-    }
-  };
-
   const handleDeleteFiltered = async () => {
     if (!globalThis.confirm("Delete all images that match current search filters?")) {
       return;
@@ -177,8 +162,17 @@ export default function TagImagesPage(props: TagImagesProps) {
       if (targets.length === 0) {
         throw new Error("No images matched current filters.");
       }
-      for (const path of targets) {
-        await deleteImage(path);
+      const deleteRes = await fetch(`${API_BASE_URL}/api/images/bulk-delete`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ filepaths: targets }),
+      });
+      const deleteData = await deleteRes.json();
+      if (!deleteRes.ok || !deleteData.success) {
+        throw new Error(deleteData.message || "Failed to queue bulk delete");
+      }
+      if (deleteData.task_id) {
+        await waitForTask(deleteData.task_id);
       }
       await fetchImages(1);
     } catch (err) {
