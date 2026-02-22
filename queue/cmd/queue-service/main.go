@@ -11,13 +11,14 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"math/rand"
 	"mime/multipart"
 	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime/debug"
 	"sort"
 	"strings"
 	"sync"
@@ -137,6 +138,27 @@ type imageTag struct {
 	Confidence float64 `json:"confidence"`
 }
 
+var logger = initLogger()
+
+func initLogger() *slog.Logger {
+	level := new(slog.LevelVar)
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("LOG_LEVEL"))) {
+	case "debug":
+		level.Set(slog.LevelDebug)
+	case "warn", "warning":
+		level.Set(slog.LevelWarn)
+	case "error":
+		level.Set(slog.LevelError)
+	default:
+		level.Set(slog.LevelInfo)
+	}
+	l := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
+		Level: level,
+	}))
+	slog.SetDefault(l)
+	return l
+}
+
 func main() {
 	mode := flag.String("mode", "all", "run mode: all|api|worker")
 	flag.Parse()
@@ -144,7 +166,8 @@ func main() {
 	cfg := loadConfig()
 	st, err := newAppState(cfg)
 	if err != nil {
-		log.Fatalf("failed to initialize: %v", err)
+		logger.Error("failed to initialize app state", "error", err)
+		os.Exit(1)
 	}
 	defer st.redis.Close()
 	defer st.asynqCli.Close()
@@ -160,7 +183,8 @@ func main() {
 		go runWorker(st)
 		runAPI(st)
 	default:
-		log.Fatalf("unknown mode: %s", *mode)
+		logger.Error("unknown run mode", "mode", *mode)
+		os.Exit(1)
 	}
 }
 
@@ -224,9 +248,10 @@ func runAPI(st *appState) {
 	mux.HandleFunc("/api/images/retag", st.handleImagesRetag)
 	mux.HandleFunc("/api/tasks/status", st.handleTaskStatus)
 
-	log.Printf("queue api listening on %s", st.cfg.apiAddr)
-	if err := http.ListenAndServe(st.cfg.apiAddr, mux); err != nil {
-		log.Fatalf("api server stopped: %v", err)
+	logger.Info("queue api listening", "addr", st.cfg.apiAddr)
+	if err := http.ListenAndServe(st.cfg.apiAddr, loggingMiddleware(mux)); err != nil {
+		logger.Error("api server stopped", "error", err)
+		os.Exit(1)
 	}
 }
 
@@ -250,10 +275,82 @@ func runWorker(st *appState) {
 	mux.HandleFunc(taskTypeDeleteImage, st.processDeleteImageTask)
 	mux.HandleFunc(taskTypeRetagImage, st.processRetagImageTask)
 
-	log.Printf("queue worker started queue=%s concurrency=%d", st.cfg.queueName, st.cfg.concurrency)
+	logger.Info("queue worker started",
+		"queue", st.cfg.queueName,
+		"interactive_queue", st.cfg.interactiveQueue,
+		"concurrency", st.cfg.concurrency,
+	)
 	if err := srv.Run(mux); err != nil {
-		log.Fatalf("worker stopped: %v", err)
+		logger.Error("worker stopped", "error", err)
+		os.Exit(1)
 	}
+}
+
+type statusRecorder struct {
+	http.ResponseWriter
+	status int
+	bytes  int
+}
+
+func (r *statusRecorder) WriteHeader(status int) {
+	r.status = status
+	r.ResponseWriter.WriteHeader(status)
+}
+
+func (r *statusRecorder) Write(p []byte) (int, error) {
+	if r.status == 0 {
+		r.status = http.StatusOK
+	}
+	n, err := r.ResponseWriter.Write(p)
+	r.bytes += n
+	return n, err
+}
+
+func loggingMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		reqID := strings.TrimSpace(r.Header.Get("X-Request-Id"))
+		if reqID == "" {
+			reqID = uuid.NewString()
+		}
+		w.Header().Set("X-Request-Id", reqID)
+		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+
+		defer func() {
+			if recErr := recover(); recErr != nil {
+				logger.Error("panic recovered in http handler",
+					"request_id", reqID,
+					"method", r.Method,
+					"path", r.URL.Path,
+					"error", recErr,
+					"stack", string(debug.Stack()),
+				)
+				http.Error(rec, "internal server error", http.StatusInternalServerError)
+			}
+
+			durationMs := time.Since(start).Milliseconds()
+			attrs := []any{
+				"request_id", reqID,
+				"method", r.Method,
+				"path", r.URL.Path,
+				"query", r.URL.RawQuery,
+				"status", rec.status,
+				"bytes", rec.bytes,
+				"duration_ms", durationMs,
+				"remote_addr", r.RemoteAddr,
+			}
+			switch {
+			case rec.status >= 500:
+				logger.Error("http request completed", attrs...)
+			case rec.status >= 400:
+				logger.Warn("http request completed", attrs...)
+			default:
+				logger.Info("http request completed", attrs...)
+			}
+		}()
+
+		next.ServeHTTP(rec, r)
+	})
 }
 
 func (st *appState) handleDownload(w http.ResponseWriter, r *http.Request) {
@@ -296,7 +393,12 @@ func (st *appState) handleDownloadPost(w http.ResponseWriter, r *http.Request) {
 			asynq.Timeout(30*time.Minute),
 		)
 		if err != nil {
-			log.Printf("enqueue download failed: %v", err)
+			logger.Warn("failed to enqueue download task",
+				"task_type", taskTypeDownload,
+				"task_id", taskID,
+				"url", url,
+				"error", err,
+			)
 			continue
 		}
 
@@ -308,6 +410,7 @@ func (st *appState) handleDownloadPost(w http.ResponseWriter, r *http.Request) {
 	}
 
 	st.redis.LTrim(ctx, taskListKey, -maxTrackedTasks, -1)
+	logger.Info("download tasks queued", "count", count)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"success":      true,
 		"message":      fmt.Sprintf("%d download tasks have been queued.", count),
@@ -451,12 +554,18 @@ func (st *appState) enqueueAutotagTask(w http.ResponseWriter, r *http.Request, t
 		asynq.Timeout(12*time.Hour),
 	)
 	if err != nil {
+		logger.Error("failed to enqueue autotag task",
+			"task_type", taskType,
+			"task_id", taskID,
+			"error", err,
+		)
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"success": false, "message": "failed to queue task"})
 		return
 	}
 	ctx := r.Context()
 	st.redis.Set(ctx, autotagLastTask, taskID, 7*24*time.Hour)
 	setTaskState(ctx, st.redis, taskID, "PENDING", map[string]any{"status": "Task is pending..."})
+	logger.Info("autotag task queued", "task_type", taskType, "task_id", taskID)
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "message": message, "task_id": taskID})
 }
 
@@ -803,10 +912,17 @@ func (st *appState) handleUsersDelete(w http.ResponseWriter, r *http.Request) {
 		asynq.Timeout(10*time.Minute),
 	)
 	if err != nil {
+		logger.Error("failed to enqueue delete user task",
+			"task_type", taskTypeDeleteUser,
+			"task_id", taskID,
+			"username", username,
+			"error", err,
+		)
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "failed to queue task"})
 		return
 	}
 	setTaskState(r.Context(), st.redis, taskID, "PENDING", map[string]any{"message": "Delete user task queued"})
+	logger.Info("delete user task queued", "task_id", taskID, "username", username)
 	writeJSON(w, http.StatusAccepted, map[string]any{
 		"success": true,
 		"queued":  true,
@@ -1112,10 +1228,17 @@ func (st *appState) handleImagesDelete(w http.ResponseWriter, r *http.Request) {
 		asynq.Timeout(5*time.Minute),
 	)
 	if err != nil {
+		logger.Error("failed to enqueue delete image task",
+			"task_type", taskTypeDeleteImage,
+			"task_id", taskID,
+			"filepath", rel,
+			"error", err,
+		)
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "failed to queue task"})
 		return
 	}
 	setTaskState(r.Context(), st.redis, taskID, "PENDING", map[string]any{"message": "Delete image task queued"})
+	logger.Info("delete image task queued", "task_id", taskID, "filepath", rel)
 	writeJSON(w, http.StatusAccepted, map[string]any{
 		"success": true,
 		"queued":  true,
@@ -1152,10 +1275,17 @@ func (st *appState) handleImagesRetag(w http.ResponseWriter, r *http.Request) {
 		asynq.Timeout(10*time.Minute),
 	)
 	if err != nil {
+		logger.Error("failed to enqueue retag image task",
+			"task_type", taskTypeRetagImage,
+			"task_id", taskID,
+			"filepath", rel,
+			"error", err,
+		)
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "failed to queue task"})
 		return
 	}
 	setTaskState(r.Context(), st.redis, taskID, "PENDING", map[string]any{"message": "Retag task queued"})
+	logger.Info("retag image task queued", "task_id", taskID, "filepath", rel)
 	writeJSON(w, http.StatusAccepted, map[string]any{
 		"success": true,
 		"queued":  true,
@@ -1883,7 +2013,30 @@ func (s *store) DeleteTagsForUser(username string) error {
 func setTaskState(ctx context.Context, rdb *redis.Client, taskID, status string, result interface{}) {
 	rec := queueTaskStatus{Status: status, Result: result, UpdatedAt: time.Now().UTC().Format(time.RFC3339)}
 	b, _ := json.Marshal(rec)
-	rdb.Set(ctx, taskMetaPrefix+taskID, b, 7*24*time.Hour)
+	if err := rdb.Set(ctx, taskMetaPrefix+taskID, b, 7*24*time.Hour).Err(); err != nil {
+		logger.Error("failed to persist task state", "task_id", taskID, "status", status, "error", err)
+	}
+
+	msg := ""
+	if resultMap, ok := result.(map[string]any); ok {
+		if s, ok := stringFromAny(resultMap["message"]); ok && s != "" {
+			msg = s
+		} else if s, ok := stringFromAny(resultMap["status"]); ok && s != "" {
+			msg = s
+		}
+	}
+	attrs := []any{"task_id", taskID, "status", status}
+	if msg != "" {
+		attrs = append(attrs, "message", msg)
+	}
+	switch status {
+	case "FAILURE":
+		logger.Error("task state updated", attrs...)
+	case "PROGRESS":
+		logger.Debug("task state updated", attrs...)
+	default:
+		logger.Info("task state updated", attrs...)
+	}
 }
 
 func getTaskState(ctx context.Context, rdb *redis.Client, taskID string) (queueTaskStatus, bool) {
