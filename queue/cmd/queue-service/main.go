@@ -118,7 +118,7 @@ func runWorker(st *appState) {
 			Concurrency: st.cfg.concurrency,
 			Queues: map[string]int{
 				st.cfg.interactiveQueue: 4,
-				st.cfg.queueName:        1,
+				st.cfg.queueName:        8,
 			},
 		},
 	)
