@@ -2,14 +2,12 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/hibiken/asynq"
 )
 
 func (st *appState) handleDownload(w http.ResponseWriter, r *http.Request) {
@@ -27,8 +25,11 @@ func (st *appState) handleDownloadPost(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		URLs []string `json:"urls"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || len(body.URLs) == 0 {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": "URL list is required"})
+	if !decodeJSONOrBadRequest(w, r, &body, "URL list is required") {
+		return
+	}
+	if len(body.URLs) == 0 {
+		badRequest(w, "URL list is required")
 		return
 	}
 
@@ -42,15 +43,7 @@ func (st *appState) handleDownloadPost(w http.ResponseWriter, r *http.Request) {
 		}
 		taskID := uuid.NewString()
 		payload := downloadTaskPayload{TaskID: taskID, URL: url}
-		b, _ := json.Marshal(payload)
-		task := asynq.NewTask(taskTypeDownload, b)
-
-		_, err := st.asynqCli.Enqueue(task,
-			asynq.Queue(st.cfg.queueName),
-			asynq.TaskID(taskID),
-			asynq.MaxRetry(0),
-			asynq.Timeout(30*time.Minute),
-		)
+		err := st.enqueueTask(taskTypeDownload, st.cfg.queueName, taskID, payload, 30*time.Minute)
 		if err != nil {
 			logger.Warn("failed to enqueue download task",
 				"task_type", taskTypeDownload,
@@ -225,15 +218,7 @@ func (st *appState) enqueueAutotagTask(w http.ResponseWriter, r *http.Request, t
 
 	taskID := uuid.NewString()
 	payload := autotagTaskPayload{TaskID: taskID}
-	b, _ := json.Marshal(payload)
-	task := asynq.NewTask(taskType, b)
-
-	_, err := st.asynqCli.Enqueue(task,
-		asynq.Queue(st.cfg.queueName),
-		asynq.TaskID(taskID),
-		asynq.MaxRetry(0),
-		asynq.Timeout(12*time.Hour),
-	)
+	err := st.enqueueTask(taskType, st.cfg.queueName, taskID, payload, 12*time.Hour)
 	if err != nil {
 		logger.Error("failed to enqueue autotag task",
 			"task_type", taskType,

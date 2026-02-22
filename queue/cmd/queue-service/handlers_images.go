@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"math/rand"
 	"net/http"
@@ -12,7 +11,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/hibiken/asynq"
 )
 
 func (st *appState) handleImages(w http.ResponseWriter, r *http.Request) {
@@ -34,39 +32,18 @@ func (st *appState) handleImagesBulkDelete(w http.ResponseWriter, r *http.Reques
 	var body struct {
 		Filepaths []string `json:"filepaths"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || len(body.Filepaths) == 0 {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": "filepaths is required"})
+	if !decodeJSONOrBadRequest(w, r, &body, "filepaths is required") {
 		return
 	}
-
-	uniq := make(map[string]struct{}, len(body.Filepaths))
-	filepaths := make([]string, 0, len(body.Filepaths))
-	for _, raw := range body.Filepaths {
-		rel := strings.TrimSpace(strings.ReplaceAll(raw, "\\", "/"))
-		if rel == "" {
-			continue
-		}
-		if _, exists := uniq[rel]; exists {
-			continue
-		}
-		uniq[rel] = struct{}{}
-		filepaths = append(filepaths, rel)
-	}
+	filepaths := normalizeUniqueFilepaths(body.Filepaths)
 	if len(filepaths) == 0 {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": "filepaths is required"})
+		badRequest(w, "filepaths is required")
 		return
 	}
 
 	taskID := uuid.NewString()
 	payload := deleteImagesTaskPayload{TaskID: taskID, Filepaths: filepaths}
-	b, _ := json.Marshal(payload)
-	task := asynq.NewTask(taskTypeDeleteImages, b)
-	_, err := st.asynqCli.Enqueue(task,
-		asynq.Queue(st.cfg.interactiveQueue),
-		asynq.TaskID(taskID),
-		asynq.MaxRetry(0),
-		asynq.Timeout(30*time.Minute),
-	)
+	err := st.enqueueTask(taskTypeDeleteImages, st.cfg.interactiveQueue, taskID, payload, 30*time.Minute)
 	if err != nil {
 		logger.Error("failed to enqueue bulk delete image task",
 			"task_type", taskTypeDeleteImages,
@@ -230,25 +207,17 @@ func (st *appState) handleImagesDelete(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Filepath string `json:"filepath"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": "filepath is required"})
+	if !decodeJSONOrBadRequest(w, r, &body, "filepath is required") {
 		return
 	}
-	rel := strings.TrimSpace(strings.ReplaceAll(body.Filepath, "\\", "/"))
+	rel := normalizeFilepath(body.Filepath)
 	if rel == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": "filepath is required"})
+		badRequest(w, "filepath is required")
 		return
 	}
 	taskID := uuid.NewString()
 	payload := deleteImageTaskPayload{TaskID: taskID, Filepath: rel}
-	b, _ := json.Marshal(payload)
-	task := asynq.NewTask(taskTypeDeleteImage, b)
-	_, err := st.asynqCli.Enqueue(task,
-		asynq.Queue(st.cfg.interactiveQueue),
-		asynq.TaskID(taskID),
-		asynq.MaxRetry(0),
-		asynq.Timeout(5*time.Minute),
-	)
+	err := st.enqueueTask(taskTypeDeleteImage, st.cfg.interactiveQueue, taskID, payload, 5*time.Minute)
 	if err != nil {
 		logger.Error("failed to enqueue delete image task",
 			"task_type", taskTypeDeleteImage,
@@ -277,25 +246,17 @@ func (st *appState) handleImagesRetag(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Filepath string `json:"filepath"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": "filepath is required"})
+	if !decodeJSONOrBadRequest(w, r, &body, "filepath is required") {
 		return
 	}
-	rel := strings.TrimSpace(strings.ReplaceAll(body.Filepath, "\\", "/"))
+	rel := normalizeFilepath(body.Filepath)
 	if rel == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": "filepath is required"})
+		badRequest(w, "filepath is required")
 		return
 	}
 	taskID := uuid.NewString()
 	payload := retagImageTaskPayload{TaskID: taskID, Filepath: rel}
-	b, _ := json.Marshal(payload)
-	task := asynq.NewTask(taskTypeRetagImage, b)
-	_, err := st.asynqCli.Enqueue(task,
-		asynq.Queue(st.cfg.interactiveQueue),
-		asynq.TaskID(taskID),
-		asynq.MaxRetry(0),
-		asynq.Timeout(10*time.Minute),
-	)
+	err := st.enqueueTask(taskTypeRetagImage, st.cfg.interactiveQueue, taskID, payload, 10*time.Minute)
 	if err != nil {
 		logger.Error("failed to enqueue retag image task",
 			"task_type", taskTypeRetagImage,
@@ -324,8 +285,7 @@ func (st *appState) handleImagesRetagBulk(w http.ResponseWriter, r *http.Request
 	var body struct {
 		Filepaths []string `json:"filepaths"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || len(body.Filepaths) == 0 {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": "filepaths is required"})
+	if !decodeJSONOrBadRequest(w, r, &body, "filepaths is required") {
 		return
 	}
 
@@ -338,34 +298,15 @@ func (st *appState) handleImagesRetagBulk(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	uniq := make(map[string]struct{}, len(body.Filepaths))
-	filepaths := make([]string, 0, len(body.Filepaths))
-	for _, raw := range body.Filepaths {
-		rel := strings.TrimSpace(strings.ReplaceAll(raw, "\\", "/"))
-		if rel == "" {
-			continue
-		}
-		if _, exists := uniq[rel]; exists {
-			continue
-		}
-		uniq[rel] = struct{}{}
-		filepaths = append(filepaths, rel)
-	}
+	filepaths := normalizeUniqueFilepaths(body.Filepaths)
 	if len(filepaths) == 0 {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": "filepaths is required"})
+		badRequest(w, "filepaths is required")
 		return
 	}
 
 	taskID := uuid.NewString()
 	payload := retagImagesTaskPayload{TaskID: taskID, Filepaths: filepaths}
-	b, _ := json.Marshal(payload)
-	task := asynq.NewTask(taskTypeRetagImages, b)
-	_, err := st.asynqCli.Enqueue(task,
-		asynq.Queue(st.cfg.interactiveQueue),
-		asynq.TaskID(taskID),
-		asynq.MaxRetry(0),
-		asynq.Timeout(30*time.Minute),
-	)
+	err := st.enqueueTask(taskTypeRetagImages, st.cfg.interactiveQueue, taskID, payload, 30*time.Minute)
 	if err != nil {
 		logger.Error("failed to enqueue bulk retag task",
 			"task_type", taskTypeRetagImages,

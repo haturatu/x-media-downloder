@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -12,7 +11,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/hibiken/asynq"
 )
 
 func (st *appState) handleTags(w http.ResponseWriter, r *http.Request) {
@@ -140,13 +138,12 @@ func (st *appState) handleTagsDelete(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Tag string `json:"tag"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": "tag is required"})
+	if !decodeJSONOrBadRequest(w, r, &body, "tag is required") {
 		return
 	}
 	tag := strings.TrimSpace(body.Tag)
 	if tag == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": "tag is required"})
+		badRequest(w, "tag is required")
 		return
 	}
 	deleted, err := st.store.DeleteTag(tag)
@@ -273,25 +270,17 @@ func (st *appState) handleUsersDelete(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Username string `json:"username"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": "username is required"})
+	if !decodeJSONOrBadRequest(w, r, &body, "username is required") {
 		return
 	}
 	username := strings.TrimSpace(body.Username)
 	if username == "" || strings.Contains(username, "/") || strings.Contains(username, "\\") {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": "Invalid username"})
+		badRequest(w, "Invalid username")
 		return
 	}
 	taskID := uuid.NewString()
 	payload := deleteUserTaskPayload{TaskID: taskID, Username: username}
-	b, _ := json.Marshal(payload)
-	task := asynq.NewTask(taskTypeDeleteUser, b)
-	_, err := st.asynqCli.Enqueue(task,
-		asynq.Queue(st.cfg.interactiveQueue),
-		asynq.TaskID(taskID),
-		asynq.MaxRetry(0),
-		asynq.Timeout(10*time.Minute),
-	)
+	err := st.enqueueTask(taskTypeDeleteUser, st.cfg.interactiveQueue, taskID, payload, 10*time.Minute)
 	if err != nil {
 		logger.Error("failed to enqueue delete user task",
 			"task_type", taskTypeDeleteUser,

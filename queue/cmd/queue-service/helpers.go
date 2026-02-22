@@ -15,6 +15,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/hibiken/asynq"
 )
 
 func setTaskState(ctx context.Context, rdb RedisClient, taskID, status string, result interface{}) {
@@ -62,6 +64,54 @@ func writeJSON(w http.ResponseWriter, status int, payload interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(payload)
+}
+
+func badRequest(w http.ResponseWriter, message string) {
+	writeJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": message})
+}
+
+func decodeJSONOrBadRequest(w http.ResponseWriter, r *http.Request, dst any, message string) bool {
+	if err := json.NewDecoder(r.Body).Decode(dst); err != nil {
+		badRequest(w, message)
+		return false
+	}
+	return true
+}
+
+func normalizeFilepath(raw string) string {
+	return strings.TrimSpace(strings.ReplaceAll(raw, "\\", "/"))
+}
+
+func normalizeUniqueFilepaths(rawPaths []string) []string {
+	uniq := make(map[string]struct{}, len(rawPaths))
+	filepaths := make([]string, 0, len(rawPaths))
+	for _, raw := range rawPaths {
+		rel := normalizeFilepath(raw)
+		if rel == "" {
+			continue
+		}
+		if _, exists := uniq[rel]; exists {
+			continue
+		}
+		uniq[rel] = struct{}{}
+		filepaths = append(filepaths, rel)
+	}
+	return filepaths
+}
+
+func (st *appState) enqueueTask(taskType, queueName, taskID string, payload any, timeout time.Duration) error {
+	b, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	task := asynq.NewTask(taskType, b)
+	_, err = st.asynqCli.Enqueue(task,
+		asynq.Queue(queueName),
+		asynq.TaskID(taskID),
+		asynq.MaxRetry(0),
+		asynq.Timeout(timeout),
+	)
+	return err
 }
 
 func parsePositiveInt(raw string, fallback int) int {

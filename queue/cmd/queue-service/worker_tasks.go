@@ -331,7 +331,7 @@ func (st *appState) processDeleteImageTask(ctx context.Context, t *asynq.Task) e
 	if taskID == "" {
 		taskID = uuid.NewString()
 	}
-	rel := strings.TrimSpace(strings.ReplaceAll(payload.Filepath, "\\", "/"))
+	rel := normalizeFilepath(payload.Filepath)
 	if rel == "" {
 		err := errors.New("filepath is required")
 		setTaskState(ctx, st.redis, taskID, "FAILURE", map[string]any{"message": err.Error()})
@@ -378,19 +378,7 @@ func (st *appState) processDeleteImagesTask(ctx context.Context, t *asynq.Task) 
 		return err
 	}
 
-	uniq := make(map[string]struct{}, len(payload.Filepaths))
-	filepaths := make([]string, 0, len(payload.Filepaths))
-	for _, raw := range payload.Filepaths {
-		rel := strings.TrimSpace(strings.ReplaceAll(raw, "\\", "/"))
-		if rel == "" {
-			continue
-		}
-		if _, exists := uniq[rel]; exists {
-			continue
-		}
-		uniq[rel] = struct{}{}
-		filepaths = append(filepaths, rel)
-	}
+	filepaths := normalizeUniqueFilepaths(payload.Filepaths)
 	if len(filepaths) == 0 {
 		err := errors.New("filepaths is required")
 		setTaskState(ctx, st.redis, taskID, "FAILURE", map[string]any{"message": err.Error()})
@@ -459,7 +447,7 @@ func (st *appState) processRetagImageTask(ctx context.Context, t *asynq.Task) er
 	if taskID == "" {
 		taskID = uuid.NewString()
 	}
-	rel := strings.TrimSpace(strings.ReplaceAll(payload.Filepath, "\\", "/"))
+	rel := normalizeFilepath(payload.Filepath)
 	if rel == "" {
 		err := errors.New("filepath is required")
 		setTaskState(ctx, st.redis, taskID, "FAILURE", map[string]any{"message": err.Error()})
@@ -498,19 +486,7 @@ func (st *appState) processRetagImagesTask(ctx context.Context, t *asynq.Task) e
 		taskID = uuid.NewString()
 	}
 
-	uniq := make(map[string]struct{}, len(payload.Filepaths))
-	filepaths := make([]string, 0, len(payload.Filepaths))
-	for _, raw := range payload.Filepaths {
-		rel := strings.TrimSpace(strings.ReplaceAll(raw, "\\", "/"))
-		if rel == "" {
-			continue
-		}
-		if _, exists := uniq[rel]; exists {
-			continue
-		}
-		uniq[rel] = struct{}{}
-		filepaths = append(filepaths, rel)
-	}
+	filepaths := normalizeUniqueFilepaths(payload.Filepaths)
 	if len(filepaths) == 0 {
 		err := errors.New("filepaths is required")
 		setTaskState(ctx, st.redis, taskID, "FAILURE", map[string]any{"message": err.Error()})
