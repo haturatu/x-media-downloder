@@ -306,8 +306,8 @@ func (st *appState) handleAutotagStatus(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	ctx := r.Context()
-	preferredTaskID, _ := st.redis.Get(ctx, autotagLastTask).Result()
-	manualTaskID := st.selectAutotagStatusTaskID(ctx, preferredTaskID)
+	manualTaskID, _ := st.redis.Get(ctx, autotagLastTask).Result()
+	manualTaskID = strings.TrimSpace(manualTaskID)
 	manualRec, manualOK := getTaskState(ctx, st.redis, manualTaskID)
 	downloadRec, downloadOK := getDownloadAutotagState(ctx, st.redis)
 
@@ -352,7 +352,7 @@ func (st *appState) handleAutotagStatus(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	if strings.TrimSpace(manualTaskID) != "" {
+	if manualTaskID != "" {
 		writeJSON(w, http.StatusOK, map[string]any{"state": "PENDING", "status": "Task is pending...", "task_id": manualTaskID})
 		return
 	}
