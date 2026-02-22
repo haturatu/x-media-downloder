@@ -1,7 +1,7 @@
 import { Head } from "$fresh/runtime.ts";
 import { useEffect, useState } from "preact/hooks";
 import { IS_BROWSER } from "$fresh/runtime.ts";
-import { getApiBaseUrl } from "../utils/api.ts";
+import { DownloadStatus, LiveStatusPayload, subscribeStatus } from "../utils/status_ws.ts";
 
 interface DownloadTaskStatus {
   task_id: string;
@@ -14,46 +14,21 @@ interface DownloadTaskStatus {
   skipped_count?: number;
 }
 
-interface DownloadStatusResponse {
-  queue_depth: number;
-  summary: {
-    total: number;
-    pending: number;
-    success: number;
-    failure: number;
-  };
-  items: DownloadTaskStatus[];
-}
+type DownloadStatusResponse = DownloadStatus;
 
 export default function DownloadStatusPage() {
   const [status, setStatus] = useState<DownloadStatusResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const API_BASE_URL = getApiBaseUrl();
-
-  const fetchStatus = async () => {
-    if (!IS_BROWSER) return;
-    try {
-      setError(null);
-      const res = await fetch(`${API_BASE_URL}/api/download`);
-      if (!res.ok) {
-        throw new Error(`HTTP error! status: ${res.status}`);
-      }
-      const data: DownloadStatusResponse = await res.json();
-      setStatus(data);
-    } catch (err) {
-      console.error("Error fetching download status:", err);
-      setError(err.message);
-    } finally {
-      setLoading(false);
-    }
-  };
-
   useEffect(() => {
-    fetchStatus();
-    const interval = setInterval(fetchStatus, 2000);
-    return () => clearInterval(interval);
+    if (!IS_BROWSER) return;
+    setError(null);
+    const unsubscribe = subscribeStatus((payload: LiveStatusPayload) => {
+      setStatus(payload.download ?? null);
+      setLoading(false);
+    });
+    return () => unsubscribe();
   }, []);
 
   return (
@@ -64,9 +39,7 @@ export default function DownloadStatusPage() {
       <div class="page-panel">
         <div class="status-head">
           <h2 class="page-title">Asynq Download Status</h2>
-          <button type="button" class="btn btn-secondary" onClick={fetchStatus}>
-            Refresh
-          </button>
+          <span class="info-text">Live via WebSocket</span>
         </div>
 
         {loading && <p>Loading status...</p>}
@@ -77,27 +50,27 @@ export default function DownloadStatusPage() {
             <div class="status-grid">
               <div class="status-tile">
                 <span>Queue Depth</span>
-                <strong>{status.queue_depth}</strong>
+                <strong>{status.queue_depth ?? 0}</strong>
               </div>
               <div class="status-tile">
                 <span>Tracked Tasks</span>
-                <strong>{status.summary.total}</strong>
+                <strong>{status.summary?.total ?? 0}</strong>
               </div>
               <div class="status-tile">
                 <span>Running/Pending</span>
-                <strong>{status.summary.pending}</strong>
+                <strong>{status.summary?.pending ?? 0}</strong>
               </div>
               <div class="status-tile">
                 <span>Failed</span>
-                <strong>{status.summary.failure}</strong>
+                <strong>{status.summary?.failure ?? 0}</strong>
               </div>
             </div>
 
-            {status.items.length === 0
+            {(status.items?.length ?? 0) === 0
               ? <p class="info-text">No tracked download tasks yet.</p>
               : (
                 <div class="task-list">
-                  {status.items.map((item) => (
+                  {(status.items as DownloadTaskStatus[]).map((item) => (
                     <article key={item.task_id} class="task-card">
                       <div class="task-row">
                         <span class={`task-state ${item.state.toLowerCase()}`}>

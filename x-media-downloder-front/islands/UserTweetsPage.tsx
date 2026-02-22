@@ -9,6 +9,7 @@ import {
   selectedImage,
   selectedImageIndex,
 } from "../utils/signals.ts";
+import { LiveStatusPayload, subscribeStatus } from "../utils/status_ws.ts";
 
 // Note: This interface is now what the island component expects as props.
 export interface UserTweetsProps {
@@ -59,6 +60,7 @@ export default function UserTweetsPage(props: UserTweetsProps) {
   const [deletingUser, setDeletingUser] = useState(false);
   const [deletingFiltered, setDeletingFiltered] = useState(false);
   const [retagging, setRetagging] = useState(false);
+  const [retagBusy, setRetagBusy] = useState(false);
   const [minTagCount, setMinTagCount] = useState<string>(
     browserParam("min_tag_count", ""),
   );
@@ -137,6 +139,13 @@ export default function UserTweetsPage(props: UserTweetsProps) {
     }
   }, [currentPage, initialCurrentPage, username]); // Added dependencies
 
+  useEffect(() => {
+    const unsubscribe = subscribeStatus((payload: LiveStatusPayload) => {
+      setRetagBusy(Boolean(payload.locks?.retagBusy));
+    });
+    return () => unsubscribe();
+  }, []);
+
   const handlePageChange = (page: number) => {
     setCurrentPage(page);
   };
@@ -208,6 +217,10 @@ export default function UserTweetsPage(props: UserTweetsProps) {
       ? "Regenerate tags for all images that match current search filters?"
       : `Regenerate tags for all images of @${username}?`;
     if (!globalThis.confirm(confirmText)) {
+      return;
+    }
+    if (retagBusy) {
+      setError("Another bulk retag task is already running.");
       return;
     }
     setRetagging(true);
@@ -284,11 +297,13 @@ export default function UserTweetsPage(props: UserTweetsProps) {
             <button
               type="button"
               class="btn btn-primary"
-              disabled={retagging}
+              disabled={retagging || retagBusy}
               onClick={handleRetagFiltered}
             >
               {retagging
                 ? "Regenerating..."
+                : retagBusy
+                ? "Retag Running..."
                 : hasActiveFilters
                 ? "Regenerate Filtered Tags"
                 : "Regenerate User Tags"}

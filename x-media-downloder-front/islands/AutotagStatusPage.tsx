@@ -3,20 +3,9 @@
 import { Head } from "$fresh/runtime.ts";
 import { useEffect, useState } from "preact/hooks";
 import { IS_BROWSER } from "$fresh/runtime.ts";
-import { getApiBaseUrl } from "../utils/api.ts";
+import { LiveStatusPayload, TaskStatus, subscribeStatus } from "../utils/status_ws.ts";
 
-interface AutotagStatus {
-  state: string;
-  status: string;
-  current?: number;
-  total?: number;
-}
-
-function isTerminalState(state?: string): boolean {
-  return state === "SUCCESS" || state === "FAILURE" || state === "NOT_FOUND";
-}
-
-function progressPercentFor(status: AutotagStatus | null): number {
+function progressPercentFor(status: TaskStatus | null): number {
   if (!status) return 0;
   if (status.total && status.total > 0 && status.current !== undefined) {
     return (status.current / status.total) * 100;
@@ -27,7 +16,7 @@ function progressPercentFor(status: AutotagStatus | null): number {
   return 0;
 }
 
-function progressTextFor(status: AutotagStatus | null): string {
+function progressTextFor(status: TaskStatus | null): string {
   if (!status) return "N/A";
   if (status.state === "PROGRESS" || status.state === "SUCCESS") {
     return `${status.current ?? 0} / ${status.total ?? 0}`;
@@ -36,56 +25,21 @@ function progressTextFor(status: AutotagStatus | null): string {
 }
 
 export default function AutotagStatusPage() {
-  const [status, setStatus] = useState<AutotagStatus | null>(null);
-  const [retagStatus, setRetagStatus] = useState<AutotagStatus | null>(null);
+  const [status, setStatus] = useState<TaskStatus | null>(null);
+  const [retagStatus, setRetagStatus] = useState<TaskStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const API_BASE_URL = getApiBaseUrl();
-
-  const fetchStatus = async () => {
-    if (!IS_BROWSER) return;
-    try {
-      setError(null);
-      const [autotagRes, retagRes] = await Promise.all([
-        fetch(`${API_BASE_URL}/api/autotag/status`),
-        fetch(`${API_BASE_URL}/api/autotag/retag-status`),
-      ]);
-      if (!autotagRes.ok) {
-        throw new Error(`Autotag status HTTP error: ${autotagRes.status}`);
-      }
-      if (!retagRes.ok) {
-        throw new Error(`Retag status HTTP error: ${retagRes.status}`);
-      }
-      const [autotagData, retagData] = await Promise.all([
-        autotagRes.json() as Promise<AutotagStatus>,
-        retagRes.json() as Promise<AutotagStatus>,
-      ]);
-      setStatus(autotagData);
-      setRetagStatus(retagData);
-    } catch (err) {
-      console.error("Error fetching autotag status:", err);
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setLoading(false);
-    }
-  };
-
   useEffect(() => {
-    fetchStatus();
-
-    const interval = setInterval(() => {
-      const autotagDone = isTerminalState(status?.state);
-      const retagDone = isTerminalState(retagStatus?.state);
-      if (autotagDone && retagDone) {
-        clearInterval(interval);
-        return;
-      }
-      fetchStatus();
-    }, 2000);
-
-    return () => clearInterval(interval);
-  }, [status, retagStatus]);
+    if (!IS_BROWSER) return;
+    setError(null);
+    const unsubscribe = subscribeStatus((payload: LiveStatusPayload) => {
+      setStatus(payload.autotag ?? null);
+      setRetagStatus(payload.retag ?? null);
+      setLoading(false);
+    });
+    return () => unsubscribe();
+  }, []);
 
   return (
     <>

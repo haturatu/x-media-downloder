@@ -1,6 +1,7 @@
 import { useEffect, useState } from "preact/hooks";
 import { IS_BROWSER } from "$fresh/runtime.ts";
 import { getApiBaseUrl } from "../utils/api.ts";
+import { LiveStatusPayload, subscribeStatus } from "../utils/status_ws.ts";
 
 interface AutotagMenuModalProps {
   isOpen: boolean;
@@ -16,6 +17,7 @@ export default function AutotagMenuModal(
   const [forceRetagLoading, setForceRetagLoading] = useState(false);
   const [reconcileLoading, setReconcileLoading] = useState(false);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
+  const [autotagBusy, setAutotagBusy] = useState(false);
 
   const API_BASE_URL = getApiBaseUrl();
 
@@ -30,8 +32,20 @@ export default function AutotagMenuModal(
     }
   }, [isOpen]);
 
+  useEffect(() => {
+    if (!IS_BROWSER) return;
+    const unsubscribe = subscribeStatus((payload: LiveStatusPayload) => {
+      setAutotagBusy(Boolean(payload.locks?.autotagBusy));
+    });
+    return () => unsubscribe();
+  }, []);
+
   const handleTagUntagged = async () => {
     if (!IS_BROWSER) return;
+    if (autotagBusy) {
+      setStatusMessage("Another autotag task is already running.");
+      return;
+    }
     setTagUntaggedLoading(true);
     setStatusMessage("Starting to tag untagged images in the background...");
     try {
@@ -57,6 +71,10 @@ export default function AutotagMenuModal(
 
   const handleForceRetag = async () => {
     if (!IS_BROWSER || !forceRetagConfirm) return;
+    if (autotagBusy) {
+      setStatusMessage("Another autotag task is already running.");
+      return;
+    }
     setForceRetagLoading(true);
     setStatusMessage(
       "Starting to force re-tag all images. This will take a while...",
@@ -84,6 +102,10 @@ export default function AutotagMenuModal(
 
   const handleReconcile = async () => {
     if (!IS_BROWSER) return;
+    if (autotagBusy) {
+      setStatusMessage("Another autotag task is already running.");
+      return;
+    }
     setReconcileLoading(true);
     setStatusMessage(
       "Starting consistency reconciliation (file system vs DB hashes)...",
@@ -128,7 +150,7 @@ export default function AutotagMenuModal(
             type="button"
             class="btn btn-success"
             onClick={handleTagUntagged}
-            disabled={tagUntaggedLoading || forceRetagLoading || reconcileLoading}
+            disabled={autotagBusy || tagUntaggedLoading || forceRetagLoading || reconcileLoading}
           >
             {tagUntaggedLoading ? "Processing..." : "Tag Untagged Images"}
           </button>
@@ -136,7 +158,7 @@ export default function AutotagMenuModal(
             type="button"
             class="btn"
             onClick={handleReconcile}
-            disabled={tagUntaggedLoading || forceRetagLoading || reconcileLoading}
+            disabled={autotagBusy || tagUntaggedLoading || forceRetagLoading || reconcileLoading}
           >
             {reconcileLoading ? "Processing..." : "Reconcile DB With Files"}
           </button>
@@ -159,7 +181,7 @@ export default function AutotagMenuModal(
               class="btn btn-danger"
               onClick={handleForceRetag}
               disabled={!forceRetagConfirm || forceRetagLoading ||
-                tagUntaggedLoading || reconcileLoading}
+                tagUntaggedLoading || reconcileLoading || autotagBusy}
             >
               {forceRetagLoading ? "Processing..." : "Force Re-tag All Images"}
             </button>

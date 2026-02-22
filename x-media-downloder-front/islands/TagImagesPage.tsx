@@ -11,6 +11,7 @@ import {
   selectedImage,
   selectedImageIndex,
 } from "../utils/signals.ts";
+import { LiveStatusPayload, subscribeStatus } from "../utils/status_ws.ts";
 
 interface TagImagesProps {
   tag: string;
@@ -58,6 +59,7 @@ export default function TagImagesPage(props: TagImagesProps) {
   const [deletingTag, setDeletingTag] = useState<boolean>(false);
   const [deletingFiltered, setDeletingFiltered] = useState<boolean>(false);
   const [retagging, setRetagging] = useState<boolean>(false);
+  const [retagBusy, setRetagBusy] = useState<boolean>(false);
   const [minTagCount, setMinTagCount] = useState<string>(
     browserParam("min_tag_count", ""),
   );
@@ -121,6 +123,13 @@ export default function TagImagesPage(props: TagImagesProps) {
       fetchImages(currentPage);
     }
   }, [currentPage, initialCurrentPage, tag]);
+
+  useEffect(() => {
+    const unsubscribe = subscribeStatus((payload: LiveStatusPayload) => {
+      setRetagBusy(Boolean(payload.locks?.retagBusy));
+    });
+    return () => unsubscribe();
+  }, []);
 
   const handlePageChange = (page: number) => {
     setCurrentPage(page);
@@ -203,6 +212,10 @@ export default function TagImagesPage(props: TagImagesProps) {
     if (!globalThis.confirm(confirmText)) {
       return;
     }
+    if (retagBusy) {
+      setError("Another bulk retag task is already running.");
+      return;
+    }
     setRetagging(true);
     setError(null);
     setStatus(null);
@@ -273,11 +286,13 @@ export default function TagImagesPage(props: TagImagesProps) {
             <button
               type="button"
               class="btn btn-primary"
-              disabled={retagging}
+              disabled={retagging || retagBusy}
               onClick={handleRetagFiltered}
             >
               {retagging
                 ? "Regenerating..."
+                : retagBusy
+                ? "Retag Running..."
                 : hasActiveFilters
                 ? "Regenerate Filtered Tags"
                 : "Regenerate Tag Images"}
