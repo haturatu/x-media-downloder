@@ -14,6 +14,7 @@ export default function AutotagMenuModal(
   const [forceRetagConfirm, setForceRetagConfirm] = useState(false);
   const [tagUntaggedLoading, setTagUntaggedLoading] = useState(false);
   const [forceRetagLoading, setForceRetagLoading] = useState(false);
+  const [reconcileLoading, setReconcileLoading] = useState(false);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
 
   const API_BASE_URL = getApiBaseUrl();
@@ -24,6 +25,7 @@ export default function AutotagMenuModal(
       setForceRetagConfirm(false);
       setTagUntaggedLoading(false);
       setForceRetagLoading(false);
+      setReconcileLoading(false);
       setStatusMessage(null);
     }
   }, [isOpen]);
@@ -80,6 +82,33 @@ export default function AutotagMenuModal(
     }
   };
 
+  const handleReconcile = async () => {
+    if (!IS_BROWSER) return;
+    setReconcileLoading(true);
+    setStatusMessage(
+      "Starting consistency reconciliation (file system vs DB hashes)...",
+    );
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/autotag/reconcile`, {
+        method: "POST",
+      });
+      const data = await res.json();
+      if (data.success) {
+        setStatusMessage(data.message);
+        onShowStatus();
+      } else {
+        setStatusMessage(
+          `Error: ${data.message || "Failed to start reconciliation task."}`,
+        );
+      }
+    } catch (error) {
+      console.error("Error starting reconciliation task:", error);
+      setStatusMessage(`Error: ${error.message}`);
+    } finally {
+      // Don't set loading to false here
+    }
+  };
+
   return (
     <div
       class={`autotag-menu-modal ${isOpen ? "visible" : ""}`}
@@ -99,9 +128,17 @@ export default function AutotagMenuModal(
             type="button"
             class="btn btn-success"
             onClick={handleTagUntagged}
-            disabled={tagUntaggedLoading || forceRetagLoading}
+            disabled={tagUntaggedLoading || forceRetagLoading || reconcileLoading}
           >
             {tagUntaggedLoading ? "Processing..." : "Tag Untagged Images"}
+          </button>
+          <button
+            type="button"
+            class="btn"
+            onClick={handleReconcile}
+            disabled={tagUntaggedLoading || forceRetagLoading || reconcileLoading}
+          >
+            {reconcileLoading ? "Processing..." : "Reconcile DB With Files"}
           </button>
           <hr />
           <div class="force-retag-section">
@@ -122,7 +159,7 @@ export default function AutotagMenuModal(
               class="btn btn-danger"
               onClick={handleForceRetag}
               disabled={!forceRetagConfirm || forceRetagLoading ||
-                tagUntaggedLoading}
+                tagUntaggedLoading || reconcileLoading}
             >
               {forceRetagLoading ? "Processing..." : "Force Re-tag All Images"}
             </button>

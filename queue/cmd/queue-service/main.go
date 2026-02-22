@@ -34,6 +34,7 @@ const (
 	taskTypeDownload        = "xmd:download_tweet_media"
 	taskTypeAutotagAll      = "xmd:autotag_all"
 	taskTypeAutotagUntagged = "xmd:autotag_untagged"
+	taskTypeReconcileDB     = "xmd:reconcile_db"
 	taskTypeDeleteUser      = "xmd:delete_user"
 	taskTypeDeleteImage     = "xmd:delete_image"
 	taskTypeDeleteImages    = "xmd:delete_images"
@@ -246,6 +247,7 @@ func runAPI(st *appState) {
 	mux.HandleFunc("/api/download", st.handleDownload)
 	mux.HandleFunc("/api/autotag/reload", st.handleAutotagReload)
 	mux.HandleFunc("/api/autotag/untagged", st.handleAutotagUntagged)
+	mux.HandleFunc("/api/autotag/reconcile", st.handleReconcileDB)
 	mux.HandleFunc("/api/autotag/status", st.handleAutotagStatus)
 	mux.HandleFunc("/api/tags", st.handleTags)
 	mux.HandleFunc("/api/users", st.handleUsers)
@@ -278,6 +280,7 @@ func runWorker(st *appState) {
 	mux.HandleFunc(taskTypeDownload, st.processDownloadTask)
 	mux.HandleFunc(taskTypeAutotagAll, st.processAutotagAllTask)
 	mux.HandleFunc(taskTypeAutotagUntagged, st.processAutotagUntaggedTask)
+	mux.HandleFunc(taskTypeReconcileDB, st.processReconcileDBTask)
 	mux.HandleFunc(taskTypeDeleteUser, st.processDeleteUserTask)
 	mux.HandleFunc(taskTypeDeleteImage, st.processDeleteImageTask)
 	mux.HandleFunc(taskTypeDeleteImages, st.processDeleteImagesTask)
@@ -547,6 +550,19 @@ func (st *appState) handleAutotagUntagged(w http.ResponseWriter, r *http.Request
 		return
 	}
 	st.enqueueAutotagTask(w, r, taskTypeAutotagUntagged, "Autotagging for untagged images started in the background.")
+}
+
+func (st *appState) handleReconcileDB(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	st.enqueueAutotagTask(
+		w,
+		r,
+		taskTypeReconcileDB,
+		"Started DB consistency check and cleanup in the background.",
+	)
 }
 
 func (st *appState) enqueueAutotagTask(w http.ResponseWriter, r *http.Request, taskType, message string) {
@@ -1535,6 +1551,98 @@ func (st *appState) processAutotagUntaggedTask(ctx context.Context, t *asynq.Tas
 	return nil
 }
 
+func (st *appState) processReconcileDBTask(ctx context.Context, t *asynq.Task) error {
+	var payload autotagTaskPayload
+	if err := json.Unmarshal(t.Payload(), &payload); err != nil {
+		return err
+	}
+	taskID := payload.TaskID
+	if taskID == "" {
+		taskID = uuid.NewString()
+	}
+
+	files, err := listImageFiles(st.cfg.mediaRoot)
+	if err != nil {
+		setTaskState(ctx, st.redis, taskID, "FAILURE", map[string]any{"message": err.Error()})
+		return err
+	}
+
+	total := len(files)
+	setTaskState(ctx, st.redis, taskID, "PROGRESS", map[string]any{
+		"current": 0,
+		"total":   total,
+		"status":  "Scanning media files and calculating hashes...",
+	})
+
+	existingPaths := make(map[string]struct{}, len(files))
+	existingHashes := make(map[string]struct{}, len(files))
+	hashReadErrors := 0
+
+	for i, full := range files {
+		rel := normalizeRelPath(st.cfg.mediaRoot, full)
+		existingPaths[rel] = struct{}{}
+
+		hash, err := fileMD5(full)
+		if err != nil {
+			hashReadErrors++
+		} else {
+			existingHashes[hash] = struct{}{}
+		}
+
+		if i%100 == 0 || i == total-1 {
+			setTaskState(ctx, st.redis, taskID, "PROGRESS", map[string]any{
+				"current": i + 1,
+				"total":   total,
+				"status":  fmt.Sprintf("Scanned %d/%d files", i+1, total),
+			})
+		}
+	}
+
+	processedHashes, err := st.store.GetAllProcessedHashes()
+	if err != nil {
+		setTaskState(ctx, st.redis, taskID, "FAILURE", map[string]any{"message": err.Error()})
+		return err
+	}
+	staleHashes := make([]string, 0)
+	for _, h := range processedHashes {
+		if _, ok := existingHashes[h]; !ok {
+			staleHashes = append(staleHashes, h)
+		}
+	}
+
+	removedHashCount, err := st.store.DeleteProcessedHashes(staleHashes)
+	if err != nil {
+		setTaskState(ctx, st.redis, taskID, "FAILURE", map[string]any{"message": err.Error()})
+		return err
+	}
+
+	taggedPaths, err := st.store.GetAllTaggedFilepaths()
+	if err != nil {
+		setTaskState(ctx, st.redis, taskID, "FAILURE", map[string]any{"message": err.Error()})
+		return err
+	}
+	removedTagPathCount := 0
+	for p := range taggedPaths {
+		if _, ok := existingPaths[p]; ok {
+			continue
+		}
+		if err := st.store.DeleteTagsForFile(p); err == nil {
+			removedTagPathCount++
+		}
+	}
+
+	setTaskState(ctx, st.redis, taskID, "SUCCESS", map[string]any{
+		"success":                 true,
+		"message":                 "DB consistency reconciliation completed",
+		"scanned_files":           total,
+		"db_hashes_total":         len(processedHashes),
+		"removed_stale_hashes":    removedHashCount,
+		"removed_missing_tagsets": removedTagPathCount,
+		"hash_read_errors":        hashReadErrors,
+	})
+	return nil
+}
+
 func (st *appState) processDeleteUserTask(ctx context.Context, t *asynq.Task) error {
 	var payload deleteUserTaskPayload
 	if err := json.Unmarshal(t.Payload(), &payload); err != nil {
@@ -2041,6 +2149,66 @@ func (s *store) GetAllTaggedFilepaths() (map[string]struct{}, error) {
 		return rows.Err()
 	})
 	return result, err
+}
+
+func (s *store) GetAllProcessedHashes() ([]string, error) {
+	items := make([]string, 0)
+	err := withSQLiteRetry(func() error {
+		rows, err := s.db.Query(`SELECT image_hash FROM processed_images`)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var h string
+			if err := rows.Scan(&h); err != nil {
+				return err
+			}
+			items = append(items, h)
+		}
+		return rows.Err()
+	})
+	return items, err
+}
+
+func (s *store) DeleteProcessedHashes(hashes []string) (int, error) {
+	if len(hashes) == 0 {
+		return 0, nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	totalDeleted := 0
+	const chunkSize = 500
+	for start := 0; start < len(hashes); start += chunkSize {
+		end := start + chunkSize
+		if end > len(hashes) {
+			end = len(hashes)
+		}
+		chunk := hashes[start:end]
+
+		placeholders := strings.TrimRight(strings.Repeat("?,", len(chunk)), ",")
+		query := fmt.Sprintf("DELETE FROM processed_images WHERE image_hash IN (%s)", placeholders)
+		args := make([]any, 0, len(chunk))
+		for _, h := range chunk {
+			args = append(args, h)
+		}
+
+		var deleted int64
+		err := withSQLiteRetry(func() error {
+			res, err := s.db.Exec(query, args...)
+			if err != nil {
+				return err
+			}
+			deleted, _ = res.RowsAffected()
+			return nil
+		})
+		if err != nil {
+			return totalDeleted, err
+		}
+		totalDeleted += int(deleted)
+	}
+	return totalDeleted, nil
 }
 
 func (s *store) GetTagsForFiles(filepaths []string) (map[string][]imageTag, error) {

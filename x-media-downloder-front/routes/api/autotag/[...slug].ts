@@ -8,7 +8,7 @@ async function proxy(req: Request, slug: string): Promise<Response> {
   const base = queueApiBaseUrl();
   let target = "";
 
-  if (req.method === "POST" && (slug === "reload" || slug === "untagged")) {
+  if (req.method === "POST" && (slug === "reload" || slug === "untagged" || slug === "reconcile")) {
     target = `${base}/api/autotag/${slug}`;
   } else if (req.method === "GET" && slug === "status") {
     target = `${base}/api/autotag/status`;
