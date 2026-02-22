@@ -8,6 +8,7 @@ import * as $api_autotag_slug_ from "./routes/api/autotag/[...slug].ts";
 import * as $api_download from "./routes/api/download.ts";
 import * as $api_images from "./routes/api/images.ts";
 import * as $api_images_bulk_delete from "./routes/api/images/bulk-delete.ts";
+import * as $api_images_retag_bulk from "./routes/api/images/retag-bulk.ts";
 import * as $api_images_retag from "./routes/api/images/retag.ts";
 import * as $api_tags from "./routes/api/tags.ts";
 import * as $api_tasks_status from "./routes/api/tasks/status.ts";
@@ -41,6 +42,7 @@ const manifest = {
     "./routes/api/download.ts": $api_download,
     "./routes/api/images.ts": $api_images,
     "./routes/api/images/bulk-delete.ts": $api_images_bulk_delete,
+    "./routes/api/images/retag-bulk.ts": $api_images_retag_bulk,
     "./routes/api/images/retag.ts": $api_images_retag,
     "./routes/api/tags.ts": $api_tags,
     "./routes/api/tasks/status.ts": $api_tasks_status,
