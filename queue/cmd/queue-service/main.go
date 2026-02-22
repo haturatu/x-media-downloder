@@ -2234,33 +2234,47 @@ func (s *store) GetTagsForFiles(filepaths []string) (map[string][]imageTag, erro
 	if len(filepaths) == 0 {
 		return result, nil
 	}
-	placeholders := strings.TrimRight(strings.Repeat("?,", len(filepaths)), ",")
-	query := fmt.Sprintf(
-		"SELECT filepath, tag, confidence FROM image_tags WHERE filepath IN (%s) ORDER BY confidence DESC",
-		placeholders,
-	)
-	args := make([]any, 0, len(filepaths))
-	for _, p := range filepaths {
-		args = append(args, p)
-	}
-	err := withSQLiteRetry(func() error {
-		rows, err := s.db.Query(query, args...)
-		if err != nil {
-			return err
+
+	const chunkSize = 500
+	for start := 0; start < len(filepaths); start += chunkSize {
+		end := start + chunkSize
+		if end > len(filepaths) {
+			end = len(filepaths)
 		}
-		defer rows.Close()
-		for rows.Next() {
-			var filepathVal string
-			var tag string
-			var confidence float64
-			if err := rows.Scan(&filepathVal, &tag, &confidence); err != nil {
+		chunk := filepaths[start:end]
+		placeholders := strings.TrimRight(strings.Repeat("?,", len(chunk)), ",")
+		query := fmt.Sprintf(
+			"SELECT filepath, tag, confidence FROM image_tags WHERE filepath IN (%s) ORDER BY confidence DESC",
+			placeholders,
+		)
+		args := make([]any, 0, len(chunk))
+		for _, p := range chunk {
+			args = append(args, p)
+		}
+
+		err := withSQLiteRetry(func() error {
+			rows, err := s.db.Query(query, args...)
+			if err != nil {
 				return err
 			}
-			result[filepathVal] = append(result[filepathVal], imageTag{Tag: tag, Confidence: confidence})
+			defer rows.Close()
+			for rows.Next() {
+				var filepathVal string
+				var tag string
+				var confidence float64
+				if err := rows.Scan(&filepathVal, &tag, &confidence); err != nil {
+					return err
+				}
+				result[filepathVal] = append(result[filepathVal], imageTag{Tag: tag, Confidence: confidence})
+			}
+			return rows.Err()
+		})
+		if err != nil {
+			return result, err
 		}
-		return rows.Err()
-	})
-	return result, err
+	}
+
+	return result, nil
 }
 
 func (s *store) GetAllTags() ([]map[string]any, error) {
