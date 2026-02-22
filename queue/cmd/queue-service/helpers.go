@@ -15,11 +15,9 @@ import (
 	"sort"
 	"strings"
 	"time"
-
-	"github.com/redis/go-redis/v9"
 )
 
-func setTaskState(ctx context.Context, rdb *redis.Client, taskID, status string, result interface{}) {
+func setTaskState(ctx context.Context, rdb RedisClient, taskID, status string, result interface{}) {
 	rec := queueTaskStatus{Status: status, Result: result, UpdatedAt: time.Now().UTC().Format(time.RFC3339)}
 	b, _ := json.Marshal(rec)
 	if err := rdb.Set(ctx, taskMetaPrefix+taskID, b, 7*24*time.Hour).Err(); err != nil {
@@ -48,7 +46,7 @@ func setTaskState(ctx context.Context, rdb *redis.Client, taskID, status string,
 	}
 }
 
-func getTaskState(ctx context.Context, rdb *redis.Client, taskID string) (queueTaskStatus, bool) {
+func getTaskState(ctx context.Context, rdb RedisClient, taskID string) (queueTaskStatus, bool) {
 	raw, err := rdb.Get(ctx, taskMetaPrefix+taskID).Result()
 	if err != nil || raw == "" {
 		return queueTaskStatus{}, false

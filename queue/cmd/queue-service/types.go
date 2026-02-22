@@ -3,9 +3,6 @@ package main
 import (
 	"database/sql"
 	"sync"
-
-	"github.com/hibiken/asynq"
-	"github.com/redis/go-redis/v9"
 )
 
 type config struct {
@@ -24,10 +21,10 @@ type config struct {
 
 type appState struct {
 	cfg       config
-	redis     *redis.Client
-	asynqCli  *asynq.Client
-	store     *store
-	inspector *asynq.Inspector
+	redis     RedisClient
+	asynqCli  AsynqClient
+	store     TagStore
+	inspector QueueInspector
 }
 
 type store struct {
