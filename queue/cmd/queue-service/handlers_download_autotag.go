@@ -170,6 +170,72 @@ func (st *appState) resolveDownloadStatus(ctx context.Context, taskID string) do
 	return resp
 }
 
+func (st *appState) selectAutotagStatusTaskID(ctx context.Context, preferredTaskID string) string {
+	ordered := make([]string, 0, 32)
+	seen := make(map[string]struct{}, 32)
+	appendUnique := func(id string) {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			return
+		}
+		if _, ok := seen[id]; ok {
+			return
+		}
+		seen[id] = struct{}{}
+		ordered = append(ordered, id)
+	}
+
+	appendUnique(preferredTaskID)
+	if recent, err := st.redis.LRange(ctx, taskListKey, -30, -1).Result(); err == nil {
+		for _, id := range uniqueReverse(recent) {
+			appendUnique(id)
+		}
+	}
+	if len(ordered) == 0 {
+		return ""
+	}
+
+	bestPending := ""
+	bestSuccess := ""
+	bestFailure := ""
+	for _, id := range ordered {
+		rec, ok := getTaskState(ctx, st.redis, id)
+		if !ok {
+			if id == preferredTaskID && bestPending == "" {
+				bestPending = id
+			}
+			continue
+		}
+		switch rec.Status {
+		case "PROGRESS":
+			return id
+		case "PENDING":
+			if bestPending == "" {
+				bestPending = id
+			}
+		case "SUCCESS":
+			if bestSuccess == "" {
+				bestSuccess = id
+			}
+		case "FAILURE":
+			if bestFailure == "" {
+				bestFailure = id
+			}
+		}
+	}
+
+	if bestPending != "" {
+		return bestPending
+	}
+	if bestSuccess != "" {
+		return bestSuccess
+	}
+	if bestFailure != "" {
+		return bestFailure
+	}
+	return preferredTaskID
+}
+
 func (st *appState) handleAutotagReload(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		w.WriteHeader(http.StatusMethodNotAllowed)
@@ -241,21 +307,23 @@ func (st *appState) handleAutotagStatus(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	ctx := r.Context()
-	taskID, err := st.redis.Get(ctx, autotagLastTask).Result()
-	if err != nil || taskID == "" {
+	preferredTaskID, _ := st.redis.Get(ctx, autotagLastTask).Result()
+	taskID := st.selectAutotagStatusTaskID(ctx, preferredTaskID)
+	if taskID == "" {
 		writeJSON(w, http.StatusOK, map[string]any{"state": "NOT_FOUND", "status": "No autotagging task has been run yet."})
 		return
 	}
 	rec, ok := getTaskState(ctx, st.redis, taskID)
 	if !ok {
-		writeJSON(w, http.StatusOK, map[string]any{"state": "PENDING", "status": "Task is pending..."})
+		writeJSON(w, http.StatusOK, map[string]any{"state": "PENDING", "status": "Task is pending...", "task_id": taskID})
 		return
 	}
 
 	resultMap, _ := rec.Result.(map[string]any)
 	resp := map[string]any{
-		"state":  rec.Status,
-		"status": pickFirstNonEmpty(resultMap, "Processing...", "status", "message"),
+		"state":   rec.Status,
+		"status":  pickFirstNonEmpty(resultMap, "Processing...", "status", "message"),
+		"task_id": taskID,
 	}
 	addProgressFields(resp, resultMap)
 	writeJSON(w, http.StatusOK, resp)
