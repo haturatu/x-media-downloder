@@ -181,12 +181,6 @@ func main() {
 	defer st.store.Close()
 	defer st.inspector.Close()
 
-	if *mode != "api" {
-		if err := st.migrateLegacyMediaLayout(); err != nil {
-			logger.Warn("legacy media migration finished with errors", "error", err)
-		}
-	}
-
 	switch *mode {
 	case "api":
 		runAPI(st)
@@ -301,113 +295,6 @@ func runWorker(st *appState) {
 		logger.Error("worker stopped", "error", err)
 		os.Exit(1)
 	}
-}
-
-func (st *appState) migrateLegacyMediaLayout() error {
-	entries, err := os.ReadDir(st.cfg.mediaRoot)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return nil
-		}
-		return err
-	}
-
-	totalMoved := 0
-	var firstErr error
-	for _, userEntry := range entries {
-		if !userEntry.IsDir() {
-			continue
-		}
-		username := userEntry.Name()
-		userPath := filepath.Join(st.cfg.mediaRoot, username)
-		moved, err := st.migrateLegacyUserLayout(username, userPath)
-		totalMoved += moved
-		if err != nil && firstErr == nil {
-			firstErr = err
-		}
-	}
-	if totalMoved > 0 {
-		logger.Info("legacy media layout migrated", "moved_files", totalMoved)
-	}
-	return firstErr
-}
-
-func (st *appState) migrateLegacyUserLayout(username, userPath string) (int, error) {
-	entries, err := os.ReadDir(userPath)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return 0, nil
-		}
-		return 0, err
-	}
-
-	moved := 0
-	var firstErr error
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-		legacyDir := filepath.Join(userPath, entry.Name())
-		imgEntries, err := os.ReadDir(legacyDir)
-		if err != nil {
-			if firstErr == nil {
-				firstErr = err
-			}
-			continue
-		}
-		for _, img := range imgEntries {
-			if img.IsDir() || !isImageFile(img.Name()) {
-				continue
-			}
-			src := filepath.Join(legacyDir, img.Name())
-			dst, err := nextAvailablePath(filepath.Join(userPath, img.Name()))
-			if err != nil {
-				if firstErr == nil {
-					firstErr = err
-				}
-				continue
-			}
-			if err := os.Rename(src, dst); err != nil {
-				if firstErr == nil {
-					firstErr = err
-				}
-				continue
-			}
-			oldRel := normalizeRelPath(st.cfg.mediaRoot, src)
-			newRel := normalizeRelPath(st.cfg.mediaRoot, dst)
-			if err := st.store.MoveTagsPath(oldRel, newRel); err != nil && firstErr == nil {
-				firstErr = err
-			}
-			moved++
-		}
-		_ = cleanupEmptyParents(legacyDir, st.cfg.mediaRoot)
-	}
-
-	if moved > 0 {
-		logger.Info("legacy user media migrated", "username", username, "moved_files", moved)
-	}
-	return moved, firstErr
-}
-
-func nextAvailablePath(path string) (string, error) {
-	if _, err := os.Stat(path); err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return path, nil
-		}
-		return "", err
-	}
-	ext := filepath.Ext(path)
-	base := strings.TrimSuffix(path, ext)
-	for i := 1; i <= 9999; i++ {
-		candidate := fmt.Sprintf("%s_dup%02d%s", base, i, ext)
-		if _, err := os.Stat(candidate); err != nil {
-			if errors.Is(err, os.ErrNotExist) {
-				return candidate, nil
-			}
-			return "", err
-		}
-	}
-	return "", fmt.Errorf("no available filename for %s", path)
 }
 
 type statusRecorder struct {
@@ -2463,32 +2350,6 @@ func (s *store) DeleteTagsForUser(username string) error {
 	return withSQLiteRetry(func() error {
 		_, err := s.db.Exec(`DELETE FROM image_tags WHERE filepath LIKE ?`, username+"/%")
 		return err
-	})
-}
-
-func (s *store) MoveTagsPath(oldPath, newPath string) error {
-	if oldPath == "" || newPath == "" || oldPath == newPath {
-		return nil
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return withSQLiteRetry(func() error {
-		tx, err := s.db.Begin()
-		if err != nil {
-			return err
-		}
-		defer tx.Rollback()
-
-		if _, err := tx.Exec(`
-			INSERT OR IGNORE INTO image_tags(filepath, tag, confidence)
-			SELECT ?, tag, confidence FROM image_tags WHERE filepath = ?
-		`, newPath, oldPath); err != nil {
-			return err
-		}
-		if _, err := tx.Exec(`DELETE FROM image_tags WHERE filepath = ?`, oldPath); err != nil {
-			return err
-		}
-		return tx.Commit()
 	})
 }
 
