@@ -108,7 +108,7 @@ export default function UserTweetsPage(props: UserTweetsProps) {
       setTotalPages(data.total_pages || 0);
       globalThis.history.pushState({}, "", `/users/${username}?${params.toString()}`);
     } catch (err) {
-      setError(err.message);
+      setError(err instanceof Error ? err.message : String(err));
     } finally {
       setLoading(false);
     }
@@ -197,7 +197,7 @@ export default function UserTweetsPage(props: UserTweetsProps) {
       setStatus(`Deleted ${targets.length} images.`);
       await fetchTweets(1);
     } catch (err) {
-      setError(err.message);
+      setError(err instanceof Error ? err.message : String(err));
     } finally {
       setDeletingFiltered(false);
     }
@@ -241,7 +241,7 @@ export default function UserTweetsPage(props: UserTweetsProps) {
       setStatus(`Regenerated tags for ${targets.length} images.`);
       await fetchTweets(currentPage);
     } catch (err) {
-      setError(err.message);
+      setError(err instanceof Error ? err.message : String(err));
     } finally {
       setRetagging(false);
     }
@@ -275,7 +275,7 @@ export default function UserTweetsPage(props: UserTweetsProps) {
       }
       globalThis.location.href = "/users";
     } catch (err) {
-      setError(err.message);
+      setError(err instanceof Error ? err.message : String(err));
       setDeletingUser(false);
     }
   };

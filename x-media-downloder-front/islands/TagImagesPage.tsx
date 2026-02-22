@@ -105,7 +105,7 @@ export default function TagImagesPage(props: TagImagesProps) {
       setTotalPages(data.total_pages || 0);
       globalThis.history.pushState({}, "", `/tags/${encodeURIComponent(tag)}?${params.toString()}`);
     } catch (err) {
-      setError(err.message);
+      setError(err instanceof Error ? err.message : String(err));
     } finally {
       setLoading(false);
     }
@@ -190,7 +190,7 @@ export default function TagImagesPage(props: TagImagesProps) {
       setStatus(`Deleted ${targets.length} images.`);
       await fetchImages(1);
     } catch (err) {
-      setError(err.message);
+      setError(err instanceof Error ? err.message : String(err));
     } finally {
       setDeletingFiltered(false);
     }
@@ -234,7 +234,7 @@ export default function TagImagesPage(props: TagImagesProps) {
       setStatus(`Regenerated tags for ${targets.length} images.`);
       await fetchImages(currentPage);
     } catch (err) {
-      setError(err.message);
+      setError(err instanceof Error ? err.message : String(err));
     } finally {
       setRetagging(false);
     }
@@ -264,7 +264,7 @@ export default function TagImagesPage(props: TagImagesProps) {
       }
       globalThis.location.href = "/tags";
     } catch (err) {
-      setError(err.message);
+      setError(err instanceof Error ? err.message : String(err));
       setDeletingTag(false);
     }
   };
