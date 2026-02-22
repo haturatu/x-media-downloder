@@ -59,7 +59,18 @@ async function buildPayload() {
 }
 
 export const handler = (req: Request, _ctx: FreshContext): Response => {
-  const { socket, response } = Deno.upgradeWebSocket(req);
+  if (req.method !== "GET") {
+    return new Response("Method Not Allowed", { status: 405 });
+  }
+
+  let socket: WebSocket;
+  let response: Response;
+  try {
+    ({ socket, response } = Deno.upgradeWebSocket(req));
+  } catch (_error) {
+    return new Response("WebSocket upgrade required", { status: 426 });
+  }
+
   let timer: number | null = null;
 
   const push = async () => {
