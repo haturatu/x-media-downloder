@@ -838,8 +838,10 @@ func (st *appState) handleUserTweetsGet(w http.ResponseWriter, r *http.Request, 
 	page := parsePositiveInt(r.URL.Query().Get("page"), 1)
 	perPage := parsePositiveInt(r.URL.Query().Get("per_page"), 100)
 	offset := (page - 1) * perPage
+	returnAll := strings.TrimSpace(r.URL.Query().Get("all")) == "1"
 	minTagCount := parseNonNegativeInt(r.URL.Query().Get("min_tag_count"), -1)
 	maxTagCount := parseNonNegativeInt(r.URL.Query().Get("max_tag_count"), -1)
+	excludeTags := splitCSV(r.URL.Query().Get("exclude_tags"))
 
 	userPath, err := resolvePathUnderRoot(st.cfg.mediaRoot, username)
 	if err != nil {
@@ -894,14 +896,18 @@ func (st *appState) handleUserTweetsGet(w http.ResponseWriter, r *http.Request, 
 		images := make([]any, 0, len(imagePaths))
 		sort.Strings(imagePaths)
 		for _, p := range imagePaths {
-			tagCount := len(tagsMap[p])
+			tagsForImage := tagsMap[p]
+			if hasTagPattern(tagsForImage, excludeTags) {
+				continue
+			}
+			tagCount := len(tagsForImage)
 			if minTagCount >= 0 && tagCount < minTagCount {
 				continue
 			}
 			if maxTagCount >= 0 && tagCount > maxTagCount {
 				continue
 			}
-			images = append(images, map[string]any{"path": p, "tags": tagsMap[p]})
+			images = append(images, map[string]any{"path": p, "tags": tagsForImage})
 		}
 		if len(images) == 0 {
 			continue
@@ -910,6 +916,22 @@ func (st *appState) handleUserTweetsGet(w http.ResponseWriter, r *http.Request, 
 	}
 
 	totalItems := len(tweets)
+	if returnAll {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"items":        tweets,
+			"total_items":  totalItems,
+			"per_page":     totalItems,
+			"current_page": 1,
+			"total_pages": func() int {
+				if totalItems == 0 {
+					return 0
+				}
+				return 1
+			}(),
+		})
+		return
+	}
+
 	start, end := pageBounds(offset, perPage, totalItems)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"items":        tweets[start:end],
@@ -939,9 +961,11 @@ func (st *appState) handleImagesGet(w http.ResponseWriter, r *http.Request) {
 	page := parsePositiveInt(r.URL.Query().Get("page"), 1)
 	perPage := parsePositiveInt(r.URL.Query().Get("per_page"), 100)
 	offset := (page - 1) * perPage
+	returnAll := strings.TrimSpace(r.URL.Query().Get("all")) == "1"
 	searchTags := splitCSV(r.URL.Query().Get("tags"))
 	minTagCount := parseNonNegativeInt(r.URL.Query().Get("min_tag_count"), -1)
 	maxTagCount := parseNonNegativeInt(r.URL.Query().Get("max_tag_count"), -1)
+	excludeTags := splitCSV(r.URL.Query().Get("exclude_tags"))
 
 	type imageInfo struct {
 		Path  string
@@ -979,7 +1003,7 @@ func (st *appState) handleImagesGet(w http.ResponseWriter, r *http.Request) {
 	}
 
 	allTagsMap := map[string][]imageTag{}
-	if minTagCount >= 0 || maxTagCount >= 0 {
+	if minTagCount >= 0 || maxTagCount >= 0 || len(excludeTags) > 0 {
 		paths := make([]string, 0, len(allImages))
 		for _, img := range allImages {
 			paths = append(paths, img.Path)
@@ -993,7 +1017,11 @@ func (st *appState) handleImagesGet(w http.ResponseWriter, r *http.Request) {
 
 		filtered := make([]imageInfo, 0, len(allImages))
 		for _, img := range allImages {
-			tagCount := len(tagsMap[img.Path])
+			tagsForImage := tagsMap[img.Path]
+			if hasTagPattern(tagsForImage, excludeTags) {
+				continue
+			}
+			tagCount := len(tagsForImage)
 			if minTagCount >= 0 && tagCount < minTagCount {
 				continue
 			}
@@ -1013,14 +1041,17 @@ func (st *appState) handleImagesGet(w http.ResponseWriter, r *http.Request) {
 		sort.Slice(allImages, func(i, j int) bool { return allImages[i].MTime > allImages[j].MTime })
 	}
 
-	start, end := pageBounds(offset, perPage, totalItems)
-	pageImages := allImages[start:end]
+	pageImages := allImages
+	if !returnAll {
+		start, end := pageBounds(offset, perPage, totalItems)
+		pageImages = allImages[start:end]
+	}
 	paths := make([]string, 0, len(pageImages))
 	for _, img := range pageImages {
 		paths = append(paths, img.Path)
 	}
 	tagsMap := allTagsMap
-	if minTagCount < 0 && maxTagCount < 0 {
+	if minTagCount < 0 && maxTagCount < 0 && len(excludeTags) == 0 {
 		var err error
 		tagsMap, err = st.store.GetTagsForFiles(paths)
 		if err != nil {
@@ -1036,12 +1067,24 @@ func (st *appState) handleImagesGet(w http.ResponseWriter, r *http.Request) {
 			"tags": tagsMap[img.Path],
 		})
 	}
+	respPerPage := perPage
+	respCurrentPage := page
+	respTotalPages := totalPages(totalItems, perPage)
+	if returnAll {
+		respPerPage = totalItems
+		respCurrentPage = 1
+		if totalItems == 0 {
+			respTotalPages = 0
+		} else {
+			respTotalPages = 1
+		}
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"items":        items,
 		"total_items":  totalItems,
-		"per_page":     perPage,
-		"current_page": page,
-		"total_pages":  totalPages(totalItems, perPage),
+		"per_page":     respPerPage,
+		"current_page": respCurrentPage,
+		"total_pages":  respTotalPages,
 	})
 }
 
@@ -1925,6 +1968,28 @@ func splitCSV(raw string) []string {
 		}
 	}
 	return items
+}
+
+func hasTagPattern(tags []imageTag, patterns []string) bool {
+	if len(patterns) == 0 {
+		return false
+	}
+	for _, t := range tags {
+		tagName := strings.ToLower(strings.TrimSpace(t.Tag))
+		if tagName == "" {
+			continue
+		}
+		for _, pattern := range patterns {
+			p := strings.ToLower(strings.TrimSpace(pattern))
+			if p == "" {
+				continue
+			}
+			if strings.Contains(tagName, p) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func resolvePathUnderRoot(root, rel string) (string, error) {

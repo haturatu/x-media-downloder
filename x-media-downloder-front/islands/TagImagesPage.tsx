@@ -2,7 +2,7 @@
 
 import { Head } from "$fresh/runtime.ts";
 import { useEffect, useState } from "preact/hooks";
-import type { Image } from "../utils/types.ts";
+import type { Image, PagedResponse } from "../utils/types.ts";
 import ImageGrid from "../components/ImageGrid.tsx";
 import Pagination from "../components/Pagination.tsx";
 import { getApiBaseUrl } from "../utils/api.ts";
@@ -22,6 +22,7 @@ interface TagImagesProps {
 interface TagImageFilters {
   minTagCount: string;
   maxTagCount: string;
+  excludeTags: string;
 }
 
 function browserParam(key: string, fallback: string): string {
@@ -54,15 +55,19 @@ export default function TagImagesPage(props: TagImagesProps) {
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const [deletingTag, setDeletingTag] = useState<boolean>(false);
+  const [deletingFiltered, setDeletingFiltered] = useState<boolean>(false);
   const [minTagCount, setMinTagCount] = useState<string>(
     browserParam("min_tag_count", ""),
   );
   const [maxTagCount, setMaxTagCount] = useState<string>(
     browserParam("max_tag_count", ""),
   );
+  const [excludeTags, setExcludeTags] = useState<string>(
+    browserParam("exclude_tags", ""),
+  );
 
   const API_BASE_URL = getApiBaseUrl();
-  const currentFilters = (): TagImageFilters => ({ minTagCount, maxTagCount });
+  const currentFilters = (): TagImageFilters => ({ minTagCount, maxTagCount, excludeTags });
 
   const buildParams = (page: number, filters: TagImageFilters): URLSearchParams => {
     const params = new URLSearchParams();
@@ -73,6 +78,7 @@ export default function TagImagesPage(props: TagImagesProps) {
     const max = toNonNegativeInt(filters.maxTagCount);
     if (min !== "") params.set("min_tag_count", min);
     if (max !== "") params.set("max_tag_count", max);
+    if (filters.excludeTags.trim()) params.set("exclude_tags", filters.excludeTags.trim());
     return params;
   };
 
@@ -123,7 +129,63 @@ export default function TagImagesPage(props: TagImagesProps) {
   const handleReset = () => {
     setMinTagCount("");
     setMaxTagCount("");
-    fetchImages(1, { minTagCount: "", maxTagCount: "" });
+    setExcludeTags("");
+    fetchImages(1, { minTagCount: "", maxTagCount: "", excludeTags: "" });
+  };
+
+  const waitForTask = async (taskId: string): Promise<void> => {
+    for (let i = 0; i < 120; i++) {
+      const res = await fetch(`${API_BASE_URL}/api/tasks/status?id=${encodeURIComponent(taskId)}`);
+      const data = await res.json();
+      if (data.state === "SUCCESS") return;
+      if (data.state === "FAILURE") throw new Error(data.message || "Delete task failed");
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+    throw new Error("Delete task timeout");
+  };
+
+  const deleteImage = async (filepath: string) => {
+    const res = await fetch(`${API_BASE_URL}/api/images`, {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ filepath }),
+    });
+    const data = await res.json();
+    if (!res.ok || !data.success) {
+      throw new Error(data.message || `Failed to queue delete: ${filepath}`);
+    }
+    if (data.task_id) {
+      await waitForTask(data.task_id);
+    }
+  };
+
+  const handleDeleteFiltered = async () => {
+    if (!globalThis.confirm("Delete all images that match current search filters?")) {
+      return;
+    }
+    setDeletingFiltered(true);
+    setError(null);
+    try {
+      const params = buildParams(1, currentFilters());
+      params.set("all", "1");
+      const res = await fetch(`${API_BASE_URL}/api/images?${params.toString()}`);
+      const data: PagedResponse<Image> = await res.json();
+      if (!res.ok) {
+        throw new Error((data as unknown as { error?: string }).error || "Failed to fetch images");
+      }
+      const targets = (data.items || []).map((img) => img.path).filter(Boolean);
+      if (targets.length === 0) {
+        throw new Error("No images matched current filters.");
+      }
+      for (const path of targets) {
+        await deleteImage(path);
+      }
+      await fetchImages(1);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setDeletingFiltered(false);
+    }
   };
 
   const handleImageClick = (image: Image, index: number) => {
@@ -162,14 +224,24 @@ export default function TagImagesPage(props: TagImagesProps) {
       <div class="page-panel">
         <div class="status-head">
           <h2 class="page-title">Images tagged with "{tag}"</h2>
-          <button
-            type="button"
-            class="btn btn-danger"
-            disabled={deletingTag}
-            onClick={handleDeleteTag}
-          >
-            {deletingTag ? "Deleting..." : "Delete This Tag"}
-          </button>
+          <div class="advanced-search-row">
+            <button
+              type="button"
+              class="btn btn-danger"
+              disabled={deletingFiltered}
+              onClick={handleDeleteFiltered}
+            >
+              {deletingFiltered ? "Deleting..." : "Delete Filtered Images"}
+            </button>
+            <button
+              type="button"
+              class="btn btn-danger"
+              disabled={deletingTag}
+              onClick={handleDeleteTag}
+            >
+              {deletingTag ? "Deleting..." : "Delete This Tag"}
+            </button>
+          </div>
         </div>
         <form class="advanced-search-panel" onSubmit={handleSearchSubmit}>
           <div class="advanced-search-row">
@@ -188,6 +260,13 @@ export default function TagImagesPage(props: TagImagesProps) {
               placeholder="Max tags per image"
               value={maxTagCount}
               onInput={(e) => setMaxTagCount(e.currentTarget.value)}
+            />
+            <input
+              type="text"
+              class="search-box"
+              placeholder="Exclude tags (comma separated)"
+              value={excludeTags}
+              onInput={(e) => setExcludeTags(e.currentTarget.value)}
             />
             <button type="submit" class="btn btn-primary">Search</button>
             <button type="button" class="btn" onClick={handleReset}>Reset</button>
