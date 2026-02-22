@@ -2,6 +2,7 @@ package main
 
 import (
 	"database/sql"
+	"net/http"
 	"sync"
 )
 
@@ -20,11 +21,13 @@ type config struct {
 }
 
 type appState struct {
-	cfg       config
-	redis     RedisClient
-	asynqCli  AsynqClient
-	store     TagStore
-	inspector QueueInspector
+	cfg                config
+	redis              RedisClient
+	asynqCli           AsynqClient
+	store              TagStore
+	inspector          QueueInspector
+	downloadHTTPClient *http.Client
+	autotagHTTPClient  *http.Client
 }
 
 type store struct {

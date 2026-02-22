@@ -14,7 +14,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/hibiken/asynq"
@@ -612,8 +611,7 @@ func (st *appState) retagSingleFile(rel string, force bool) (string, error) {
 func (st *appState) downloadImage(imageURL, tweetURL, username string, index int) string {
 	req, _ := http.NewRequest(http.MethodGet, imageURL, nil)
 	req.Header.Set("User-Agent", "Mozilla/5.0")
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := st.downloadHTTPClient.Do(req)
 	if err != nil {
 		return "failed"
 	}
@@ -682,8 +680,7 @@ func (st *appState) autotagFile(fullPath, relativePath, _ string) error {
 
 	req, _ := http.NewRequest(http.MethodPost, st.cfg.autotaggerURL, &body)
 	req.Header.Set("Content-Type", writer.FormDataContentType())
-	client := &http.Client{Timeout: 60 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := st.autotagHTTPClient.Do(req)
 	if err != nil {
 		return err
 	}

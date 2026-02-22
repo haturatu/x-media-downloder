@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/hibiken/asynq"
 	"github.com/redis/go-redis/v9"
@@ -76,11 +77,13 @@ func newAppState(cfg config) (*appState, error) {
 
 	redisOpt := asynq.RedisClientOpt{Addr: cfg.redisAddr, Password: cfg.redisPassword, DB: cfg.redisDB}
 	return &appState{
-		cfg:       cfg,
-		redis:     rdb,
-		asynqCli:  asynq.NewClient(redisOpt),
-		store:     store,
-		inspector: asynq.NewInspector(redisOpt),
+		cfg:                cfg,
+		redis:              rdb,
+		asynqCli:           asynq.NewClient(redisOpt),
+		store:              store,
+		inspector:          asynq.NewInspector(redisOpt),
+		downloadHTTPClient: newSharedHTTPClient(30 * time.Second),
+		autotagHTTPClient:  newSharedHTTPClient(60 * time.Second),
 	}, nil
 }
 
