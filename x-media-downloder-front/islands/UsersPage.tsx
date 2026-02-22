@@ -1,7 +1,5 @@
-// x-media-downloder-front/islands/UsersPage.tsx
-
 import { Head } from "$fresh/runtime.ts";
-import { useEffect, useState } from "preact/hooks";
+import { useState } from "preact/hooks";
 import type { PagedResponse, User } from "../utils/types.ts";
 import Pagination from "../components/Pagination.tsx";
 import { getApiBaseUrl } from "../utils/api.ts";
@@ -12,6 +10,31 @@ interface UsersProps {
   totalPages: number;
 }
 
+type MatchMode = "partial" | "exact";
+type UserSort = "name_asc" | "name_desc" | "tweets_desc" | "tweets_asc";
+
+interface UserFilters {
+  q: string;
+  match: MatchMode;
+  minTweets: string;
+  maxTweets: string;
+  sort: UserSort;
+}
+
+function browserParam(key: string, fallback: string): string {
+  if (typeof globalThis.location === "undefined") return fallback;
+  const value = new URLSearchParams(globalThis.location.search).get(key);
+  return value ?? fallback;
+}
+
+function toNonNegativeInt(value: string): string {
+  const trimmed = value.trim();
+  if (trimmed === "") return "";
+  const parsed = Number.parseInt(trimmed, 10);
+  if (!Number.isFinite(parsed) || parsed < 0) return "";
+  return String(parsed);
+}
+
 export default function UsersPage(props: UsersProps) {
   const {
     users: initialUsers,
@@ -20,13 +43,28 @@ export default function UsersPage(props: UsersProps) {
   } = props;
 
   const [users, setUsers] = useState<User[]>(initialUsers || []);
-  const [currentPage, setCurrentPage] = useState<number>(
-    initialCurrentPage || 1,
-  );
+  const [currentPage, setCurrentPage] = useState<number>(initialCurrentPage || 1);
   const [totalPages, setTotalPages] = useState<number>(initialTotalPages || 0);
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const [deletingUser, setDeletingUser] = useState<string | null>(null);
+
+  const [q, setQ] = useState<string>(browserParam("q", ""));
+  const [match, setMatch] = useState<MatchMode>(
+    browserParam("match", "partial") === "exact" ? "exact" : "partial",
+  );
+  const [minTweets, setMinTweets] = useState<string>(browserParam("min_tweets", ""));
+  const [maxTweets, setMaxTweets] = useState<string>(browserParam("max_tweets", ""));
+  const [sort, setSort] = useState<UserSort>((() => {
+    const val = browserParam("sort", "name_asc");
+    if (val === "name_desc" || val === "tweets_desc" || val === "tweets_asc") return val;
+    return "name_asc";
+  })());
+
+  const [showAdvanced, setShowAdvanced] = useState<boolean>(false);
+  const [showReadline, setShowReadline] = useState<boolean>(
+    browserParam("show_readline", "0") === "1",
+  );
 
   const API_BASE_URL = getApiBaseUrl();
 
@@ -43,25 +81,67 @@ export default function UsersPage(props: UsersProps) {
     throw new Error("Task timeout");
   };
 
-  useEffect(() => {
-    // Only refetch on client-side navigation
-    if (currentPage !== initialCurrentPage) {
-      setLoading(true);
-      setError(null);
-      fetch(`${API_BASE_URL}/api/users?page=${currentPage}&per_page=100`)
-        .then((res) => res.json())
-        .then((data: PagedResponse<User>) => {
-          setUsers(data.items || []);
-          setTotalPages(data.total_pages || 0);
-        })
-        .catch((err) => setError(err.message))
-        .finally(() => setLoading(false));
+  const currentFilters = (): UserFilters => ({ q, match, minTweets, maxTweets, sort });
+
+  const buildParams = (page: number, filters: UserFilters): URLSearchParams => {
+    const params = new URLSearchParams();
+    params.set("page", String(page));
+    params.set("per_page", "100");
+    if (filters.q.trim()) params.set("q", filters.q.trim());
+    if (filters.match !== "partial") params.set("match", filters.match);
+    const min = toNonNegativeInt(filters.minTweets);
+    const max = toNonNegativeInt(filters.maxTweets);
+    if (min !== "") params.set("min_tweets", min);
+    if (max !== "") params.set("max_tweets", max);
+    if (filters.sort !== "name_asc") params.set("sort", filters.sort);
+    if (showReadline) params.set("show_readline", "1");
+    return params;
+  };
+
+  const fetchUsers = async (page: number, filters: UserFilters = currentFilters()) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const params = buildParams(page, filters);
+      const res = await fetch(`${API_BASE_URL}/api/users?${params.toString()}`);
+      const data: PagedResponse<User> = await res.json();
+      if (!res.ok) {
+        throw new Error((data as unknown as { error?: string }).error || "Failed to fetch users");
+      }
+      setUsers(data.items || []);
+      setCurrentPage(data.current_page || page);
+      setTotalPages(data.total_pages || 0);
+      globalThis.history.pushState({}, "", `/users?${params.toString()}`);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
     }
-  }, [currentPage, initialCurrentPage]);
+  };
 
   const handlePageChange = (page: number) => {
-    setCurrentPage(page);
-    globalThis.history.pushState({}, "", `/users?page=${page}`);
+    fetchUsers(page);
+  };
+
+  const handleSearchSubmit = (e: Event) => {
+    e.preventDefault();
+    fetchUsers(1);
+  };
+
+  const handleReset = () => {
+    const reset: UserFilters = {
+      q: "",
+      match: "partial",
+      minTweets: "",
+      maxTweets: "",
+      sort: "name_asc",
+    };
+    setQ(reset.q);
+    setMatch(reset.match);
+    setMinTweets(reset.minTweets);
+    setMaxTweets(reset.maxTweets);
+    setSort(reset.sort);
+    fetchUsers(1, reset);
   };
 
   const handleDeleteUser = async (username: string) => {
@@ -93,6 +173,10 @@ export default function UsersPage(props: UsersProps) {
     }
   };
 
+  const readlineText = users
+    .map((user) => `${user.username}\ttweet_count=${user.tweet_count}`)
+    .join("\n");
+
   return (
     <>
       <Head>
@@ -100,6 +184,85 @@ export default function UsersPage(props: UsersProps) {
       </Head>
       <div class="page-panel">
         <h2 class="page-title">Users</h2>
+
+        <form class="advanced-search-panel" onSubmit={handleSearchSubmit}>
+          <div class="advanced-search-row">
+            <input
+              type="search"
+              class="search-box"
+              placeholder="Username (partial match)"
+              value={q}
+              onInput={(e) => setQ(e.currentTarget.value)}
+            />
+            <button type="submit" class="btn btn-primary">Search</button>
+            <button type="button" class="btn" onClick={handleReset}>Reset</button>
+            <label class="toggle-label">
+              <input
+                type="checkbox"
+                checked={showAdvanced}
+                onInput={(e) => setShowAdvanced(e.currentTarget.checked)}
+              />
+              Advanced
+            </label>
+            <label class="toggle-label">
+              <input
+                type="checkbox"
+                checked={showReadline}
+                onInput={(e) => setShowReadline(e.currentTarget.checked)}
+              />
+              Readline output
+            </label>
+          </div>
+
+          {showAdvanced && (
+            <div class="advanced-search-grid">
+              <label>
+                Match
+                <select value={match} onInput={(e) => setMatch(e.currentTarget.value as MatchMode)}>
+                  <option value="partial">Partial</option>
+                  <option value="exact">Exact</option>
+                </select>
+              </label>
+              <label>
+                Min tweets
+                <input
+                  type="number"
+                  min="0"
+                  value={minTweets}
+                  onInput={(e) => setMinTweets(e.currentTarget.value)}
+                />
+              </label>
+              <label>
+                Max tweets
+                <input
+                  type="number"
+                  min="0"
+                  value={maxTweets}
+                  onInput={(e) => setMaxTweets(e.currentTarget.value)}
+                />
+              </label>
+              <label>
+                Sort
+                <select value={sort} onInput={(e) => setSort(e.currentTarget.value as UserSort)}>
+                  <option value="name_asc">Name ASC</option>
+                  <option value="name_desc">Name DESC</option>
+                  <option value="tweets_desc">Tweets DESC</option>
+                  <option value="tweets_asc">Tweets ASC</option>
+                </select>
+              </label>
+            </div>
+          )}
+        </form>
+
+        {showReadline && (
+          <textarea
+            class="readline-output"
+            readOnly
+            value={readlineText}
+            placeholder="search results in readline format"
+          />
+        )}
+
         {loading && <p>Loading users...</p>}
         {error && <p class="error-text">Error: {error}</p>}
         {!users && !loading && !error && (

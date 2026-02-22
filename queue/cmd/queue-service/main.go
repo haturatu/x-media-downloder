@@ -537,21 +537,87 @@ func (st *appState) handleTagsGet(w http.ResponseWriter, r *http.Request) {
 	perPage := parsePositiveInt(r.URL.Query().Get("per_page"), 100)
 	offset := (page - 1) * perPage
 	q := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("q")))
+	match := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("match")))
+	minCount := parseNonNegativeInt(r.URL.Query().Get("min_count"), -1)
+	maxCount := parseNonNegativeInt(r.URL.Query().Get("max_count"), -1)
+	sortBy := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("sort")))
 
 	tags, err := st.store.GetAllTags()
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "Internal Server Error"})
 		return
 	}
-	if q != "" {
-		filtered := make([]map[string]any, 0, len(tags))
-		for _, item := range tags {
-			tagVal, _ := item["tag"].(string)
-			if strings.Contains(strings.ToLower(tagVal), q) {
-				filtered = append(filtered, item)
+	filtered := make([]map[string]any, 0, len(tags))
+	for _, item := range tags {
+		tagVal, _ := item["tag"].(string)
+		countInt := 0
+		switch v := item["count"].(type) {
+		case int:
+			countInt = v
+		case int64:
+			countInt = int(v)
+		case float64:
+			countInt = int(v)
+		}
+
+		if q != "" {
+			tagLower := strings.ToLower(tagVal)
+			if match == "exact" {
+				if tagLower != q {
+					continue
+				}
+			} else if !strings.Contains(tagLower, q) {
+				continue
 			}
 		}
-		tags = filtered
+		if minCount >= 0 && countInt < minCount {
+			continue
+		}
+		if maxCount >= 0 && countInt > maxCount {
+			continue
+		}
+		filtered = append(filtered, map[string]any{
+			"tag":   tagVal,
+			"count": countInt,
+		})
+	}
+	tags = filtered
+
+	switch sortBy {
+	case "name_desc":
+		sort.Slice(tags, func(i, j int) bool {
+			a, _ := tags[i]["tag"].(string)
+			b, _ := tags[j]["tag"].(string)
+			return strings.ToLower(a) > strings.ToLower(b)
+		})
+	case "count_asc":
+		sort.Slice(tags, func(i, j int) bool {
+			a, _ := tags[i]["count"].(int)
+			b, _ := tags[j]["count"].(int)
+			if a == b {
+				at, _ := tags[i]["tag"].(string)
+				bt, _ := tags[j]["tag"].(string)
+				return strings.ToLower(at) < strings.ToLower(bt)
+			}
+			return a < b
+		})
+	case "name_asc":
+		sort.Slice(tags, func(i, j int) bool {
+			a, _ := tags[i]["tag"].(string)
+			b, _ := tags[j]["tag"].(string)
+			return strings.ToLower(a) < strings.ToLower(b)
+		})
+	default:
+		sort.Slice(tags, func(i, j int) bool {
+			a, _ := tags[i]["count"].(int)
+			b, _ := tags[j]["count"].(int)
+			if a == b {
+				at, _ := tags[i]["tag"].(string)
+				bt, _ := tags[j]["tag"].(string)
+				return strings.ToLower(at) < strings.ToLower(bt)
+			}
+			return a > b
+		})
 	}
 
 	totalItems := len(tags)
@@ -604,9 +670,13 @@ func (st *appState) handleUsers(w http.ResponseWriter, r *http.Request) {
 
 func (st *appState) handleUsersGet(w http.ResponseWriter, r *http.Request) {
 	q := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("q")))
+	match := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("match")))
 	page := parsePositiveInt(r.URL.Query().Get("page"), 1)
 	perPage := parsePositiveInt(r.URL.Query().Get("per_page"), 100)
 	offset := (page - 1) * perPage
+	minTweets := parseNonNegativeInt(r.URL.Query().Get("min_tweets"), -1)
+	maxTweets := parseNonNegativeInt(r.URL.Query().Get("max_tweets"), -1)
+	sortBy := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("sort")))
 
 	type userInfo struct {
 		Username   string `json:"username"`
@@ -624,8 +694,15 @@ func (st *appState) handleUsersGet(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		username := entry.Name()
-		if q != "" && !strings.Contains(strings.ToLower(username), q) {
-			continue
+		if q != "" {
+			usernameLower := strings.ToLower(username)
+			if match == "exact" {
+				if usernameLower != q {
+					continue
+				}
+			} else if !strings.Contains(usernameLower, q) {
+				continue
+			}
 		}
 		userPath := filepath.Join(st.cfg.mediaRoot, username)
 		tweetCount := 0
@@ -637,11 +714,37 @@ func (st *appState) handleUsersGet(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
-		if tweetCount > 0 {
-			users = append(users, userInfo{Username: username, TweetCount: tweetCount})
+		if tweetCount <= 0 {
+			continue
 		}
+		if minTweets >= 0 && tweetCount < minTweets {
+			continue
+		}
+		if maxTweets >= 0 && tweetCount > maxTweets {
+			continue
+		}
+		users = append(users, userInfo{Username: username, TweetCount: tweetCount})
 	}
-	sort.Slice(users, func(i, j int) bool { return users[i].Username < users[j].Username })
+	switch sortBy {
+	case "name_desc":
+		sort.Slice(users, func(i, j int) bool { return strings.ToLower(users[i].Username) > strings.ToLower(users[j].Username) })
+	case "tweets_desc":
+		sort.Slice(users, func(i, j int) bool {
+			if users[i].TweetCount == users[j].TweetCount {
+				return strings.ToLower(users[i].Username) < strings.ToLower(users[j].Username)
+			}
+			return users[i].TweetCount > users[j].TweetCount
+		})
+	case "tweets_asc":
+		sort.Slice(users, func(i, j int) bool {
+			if users[i].TweetCount == users[j].TweetCount {
+				return strings.ToLower(users[i].Username) < strings.ToLower(users[j].Username)
+			}
+			return users[i].TweetCount < users[j].TweetCount
+		})
+	default:
+		sort.Slice(users, func(i, j int) bool { return strings.ToLower(users[i].Username) < strings.ToLower(users[j].Username) })
+	}
 
 	totalItems := len(users)
 	start, end := pageBounds(offset, perPage, totalItems)
@@ -1698,6 +1801,18 @@ func parsePositiveInt(raw string, fallback int) int {
 	}
 	var n int
 	if _, err := fmt.Sscanf(val, "%d", &n); err != nil || n <= 0 {
+		return fallback
+	}
+	return n
+}
+
+func parseNonNegativeInt(raw string, fallback int) int {
+	val := strings.TrimSpace(raw)
+	if val == "" {
+		return fallback
+	}
+	var n int
+	if _, err := fmt.Sscanf(val, "%d", &n); err != nil || n < 0 {
 		return fallback
 	}
 	return n

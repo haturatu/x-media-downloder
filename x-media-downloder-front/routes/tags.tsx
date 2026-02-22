@@ -17,13 +17,14 @@ export default function TagsRoute({ data }: PageProps<TagsProps>) {
 
 export const handler = async (req: Request, ctx: FreshContext): Promise<Response> => {
   const url = new URL(req.url);
-  const page = parseInt(url.searchParams.get("page") || "1");
-  const per_page = parseInt(url.searchParams.get("per_page") || "100");
+  const params = new URLSearchParams(url.searchParams);
+  if (!params.get("page")) params.set("page", "1");
+  if (!params.get("per_page")) params.set("per_page", "100");
 
   const API_BASE_URL = getApiBaseUrl();
 
   try {
-    const res = await fetch(`${API_BASE_URL}/api/tags?page=${page}&per_page=${per_page}`);
+    const res = await fetch(`${API_BASE_URL}/api/tags?${params.toString()}`);
     if (!res.ok) {
       throw new Error(`HTTP error! status: ${res.status}`);
     }
