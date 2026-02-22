@@ -20,10 +20,7 @@ X (旧Twitter) からメディアをダウンロードするためのツール�
     git clone https://github.com/haturatu/x-media-downloder.git
     cd x-media-downloder
     ```
-2.  必要なPythonパッケージをインストールします:
-    ```bash
-    pip install -r requirements.txt
-    ```
+2.  `.env` を作成し、必要に応じて設定します（例: `MEDIA_ROOT`）。
 
 ## 実行
 
@@ -33,9 +30,8 @@ X (旧Twitter) からメディアをダウンロードするためのツール�
 honcho start
 ```
 
-このコマンドは `Procfile` に基づいて、以下の3つのプロセスを同時に起動します。
+このコマンドは `Procfile` に基づいて、以下の2つのプロセスを同時に起動します。
 
--   **Webサーバー**: `http://localhost:8888` でアクセス可能なフロントエンドを提供します。
 -   **Queue API (Go + asynq)**: タスク投入とステータス取得を処理します。
 -   **Queue Worker (Go + asynq)**: URLからのメディアダウンロード/Autotagの非同期実行を処理します。
 
