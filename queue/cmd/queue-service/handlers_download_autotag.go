@@ -224,14 +224,14 @@ func (st *appState) selectAutotagStatusTaskID(ctx context.Context, preferredTask
 		}
 	}
 
-	if bestPending != "" {
-		return bestPending
-	}
 	if bestSuccess != "" {
 		return bestSuccess
 	}
 	if bestFailure != "" {
 		return bestFailure
+	}
+	if bestPending != "" {
+		return bestPending
 	}
 	return preferredTaskID
 }
