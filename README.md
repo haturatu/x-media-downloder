@@ -44,6 +44,18 @@ honcho start
 Docker Compose構成では、`nginx` が `8888` を受けて `frontend` にプロキシします。
 画像配信 (`/images/*`) は Nginx 側で 5分キャッシュされるため、ディスクI/Oを抑制できます。
 
+### Docker Compose 運用メモ（autotaggerを毎回ビルドしない）
+
+起動時間と安定性を優先する場合は、`autotagger` を毎回ビルドせず既存イメージを使って起動できます。
+
+```bash
+# 3) 必要サービスだけビルド
+docker compose up -d --build queue-api queue-worker frontend nginx
+
+# 4) autotaggerは既存イメージを使って起動（再ビルドしない）
+docker compose up -d --no-build autotagger
+```
+
 ## 使い方
 
 ### ダウンロード
