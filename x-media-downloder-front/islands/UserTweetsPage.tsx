@@ -55,8 +55,10 @@ export default function UserTweetsPage(props: UserTweetsProps) {
   const [totalPages, setTotalPages] = useState<number>(initialTotalPages || 0);
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
+  const [status, setStatus] = useState<string | null>(null);
   const [deletingUser, setDeletingUser] = useState(false);
   const [deletingFiltered, setDeletingFiltered] = useState(false);
+  const [retagging, setRetagging] = useState(false);
   const [minTagCount, setMinTagCount] = useState<string>(
     browserParam("min_tag_count", ""),
   );
@@ -70,6 +72,9 @@ export default function UserTweetsPage(props: UserTweetsProps) {
   const API_BASE_URL = getApiBaseUrl();
   const allImages = tweets.flatMap((tweet) => tweet.images);
   const currentFilters = (): UserImageFilters => ({ minTagCount, maxTagCount, excludeTags });
+  const hasActiveFilters = toNonNegativeInt(minTagCount) !== "" ||
+    toNonNegativeInt(maxTagCount) !== "" ||
+    excludeTags.trim() !== "";
 
   const buildParams = (page: number, filters: UserImageFilters): URLSearchParams => {
     const params = new URLSearchParams();
@@ -148,24 +153,32 @@ export default function UserTweetsPage(props: UserTweetsProps) {
     fetchTweets(1, { minTagCount: "", maxTagCount: "", excludeTags: "" });
   };
 
+  const fetchTargetPaths = async (filters: UserImageFilters): Promise<string[]> => {
+    const params = buildParams(1, filters);
+    params.set("all", "1");
+    const res = await fetch(`${API_BASE_URL}/api/users/${username}/tweets?${params.toString()}`);
+    const data: PagedResponse<Tweet> = await res.json();
+    if (!res.ok) {
+      throw new Error((data as unknown as { error?: string }).error || "Failed to fetch tweets");
+    }
+    return (data.items || [])
+      .flatMap((tweet) => tweet.images || [])
+      .map((img) => img.path)
+      .filter(Boolean);
+  };
+
   const handleDeleteFiltered = async () => {
-    if (!globalThis.confirm("Delete all images that match current search filters?")) {
+    const confirmText = hasActiveFilters
+      ? "Delete all images that match current search filters?"
+      : `Delete all images for @${username}?`;
+    if (!globalThis.confirm(confirmText)) {
       return;
     }
     setDeletingFiltered(true);
     setError(null);
+    setStatus(null);
     try {
-      const params = buildParams(1, currentFilters());
-      params.set("all", "1");
-      const res = await fetch(`${API_BASE_URL}/api/users/${username}/tweets?${params.toString()}`);
-      const data: PagedResponse<Tweet> = await res.json();
-      if (!res.ok) {
-        throw new Error((data as unknown as { error?: string }).error || "Failed to fetch tweets");
-      }
-      const targets = (data.items || [])
-        .flatMap((tweet) => tweet.images || [])
-        .map((img) => img.path)
-        .filter(Boolean);
+      const targets = await fetchTargetPaths(currentFilters());
       if (targets.length === 0) {
         throw new Error("No images matched current filters.");
       }
@@ -181,11 +194,56 @@ export default function UserTweetsPage(props: UserTweetsProps) {
       if (deleteData.task_id) {
         await waitForTask(deleteData.task_id);
       }
+      setStatus(`Deleted ${targets.length} images.`);
       await fetchTweets(1);
     } catch (err) {
       setError(err.message);
     } finally {
       setDeletingFiltered(false);
+    }
+  };
+
+  const handleRetagFiltered = async () => {
+    const confirmText = hasActiveFilters
+      ? "Regenerate tags for all images that match current search filters?"
+      : `Regenerate tags for all images of @${username}?`;
+    if (!globalThis.confirm(confirmText)) {
+      return;
+    }
+    setRetagging(true);
+    setError(null);
+    setStatus(null);
+    try {
+      const targets = await fetchTargetPaths(currentFilters());
+      if (targets.length === 0) {
+        throw new Error("No images matched current filters.");
+      }
+
+      const taskIds: string[] = [];
+      for (const filepath of targets) {
+        const res = await fetch(`${API_BASE_URL}/api/images/retag`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ filepath }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) {
+          throw new Error(data.message || `Failed to queue retag task: ${filepath}`);
+        }
+        if (data.task_id) {
+          taskIds.push(data.task_id);
+        }
+      }
+
+      for (const taskId of taskIds) {
+        await waitForTask(taskId);
+      }
+      setStatus(`Regenerated tags for ${targets.length} images.`);
+      await fetchTweets(currentPage);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setRetagging(false);
     }
   };
 
@@ -201,6 +259,7 @@ export default function UserTweetsPage(props: UserTweetsProps) {
 
     setDeletingUser(true);
     setError(null);
+    setStatus(null);
     try {
       const res = await fetch(`${API_BASE_URL}/api/users`, {
         method: "DELETE",
@@ -232,16 +291,32 @@ export default function UserTweetsPage(props: UserTweetsProps) {
           <div class="advanced-search-row">
             <button
               type="button"
-              class="btn btn-danger"
-              disabled={deletingFiltered}
-              onClick={handleDeleteFiltered}
+              class="btn btn-primary"
+              disabled={retagging}
+              onClick={handleRetagFiltered}
             >
-              {deletingFiltered ? "Deleting..." : "Delete Filtered Images"}
+              {retagging
+                ? "Regenerating..."
+                : hasActiveFilters
+                ? "Regenerate Filtered Tags"
+                : "Regenerate User Tags"}
             </button>
             <button
               type="button"
               class="btn btn-danger"
-              disabled={deletingUser}
+              disabled={deletingFiltered || retagging}
+              onClick={handleDeleteFiltered}
+            >
+              {deletingFiltered
+                ? "Deleting..."
+                : hasActiveFilters
+                ? "Delete Filtered Images"
+                : "Delete User Images"}
+            </button>
+            <button
+              type="button"
+              class="btn btn-danger"
+              disabled={deletingUser || retagging || deletingFiltered}
               onClick={handleDeleteUser}
             >
               {deletingUser ? "Deleting..." : "Delete User"}
@@ -279,6 +354,7 @@ export default function UserTweetsPage(props: UserTweetsProps) {
         </form>
         {loading && <p>Loading images...</p>}
         {error && <p class="error-text">Error: {error}</p>}
+        {status && !error && <p class="info-text">{status}</p>}
         {allImages.length === 0 && !loading && !error && (
           <p class="info-text">No images found for this user.</p>
         )}

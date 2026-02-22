@@ -54,8 +54,10 @@ export default function TagImagesPage(props: TagImagesProps) {
   const [totalPages, setTotalPages] = useState<number>(initialTotalPages || 0);
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
+  const [status, setStatus] = useState<string | null>(null);
   const [deletingTag, setDeletingTag] = useState<boolean>(false);
   const [deletingFiltered, setDeletingFiltered] = useState<boolean>(false);
+  const [retagging, setRetagging] = useState<boolean>(false);
   const [minTagCount, setMinTagCount] = useState<string>(
     browserParam("min_tag_count", ""),
   );
@@ -68,6 +70,9 @@ export default function TagImagesPage(props: TagImagesProps) {
 
   const API_BASE_URL = getApiBaseUrl();
   const currentFilters = (): TagImageFilters => ({ minTagCount, maxTagCount, excludeTags });
+  const hasActiveFilters = toNonNegativeInt(minTagCount) !== "" ||
+    toNonNegativeInt(maxTagCount) !== "" ||
+    excludeTags.trim() !== "";
 
   const buildParams = (page: number, filters: TagImageFilters): URLSearchParams => {
     const params = new URLSearchParams();
@@ -133,6 +138,17 @@ export default function TagImagesPage(props: TagImagesProps) {
     fetchImages(1, { minTagCount: "", maxTagCount: "", excludeTags: "" });
   };
 
+  const fetchTargetPaths = async (filters: TagImageFilters): Promise<string[]> => {
+    const params = buildParams(1, filters);
+    params.set("all", "1");
+    const res = await fetch(`${API_BASE_URL}/api/images?${params.toString()}`);
+    const data: PagedResponse<Image> = await res.json();
+    if (!res.ok) {
+      throw new Error((data as unknown as { error?: string }).error || "Failed to fetch images");
+    }
+    return (data.items || []).map((img) => img.path).filter(Boolean);
+  };
+
   const waitForTask = async (taskId: string): Promise<void> => {
     for (let i = 0; i < 120; i++) {
       const res = await fetch(`${API_BASE_URL}/api/tasks/status?id=${encodeURIComponent(taskId)}`);
@@ -145,20 +161,17 @@ export default function TagImagesPage(props: TagImagesProps) {
   };
 
   const handleDeleteFiltered = async () => {
-    if (!globalThis.confirm("Delete all images that match current search filters?")) {
+    const confirmText = hasActiveFilters
+      ? "Delete all images that match current search filters?"
+      : `Delete all images that have tag "${tag}"?`;
+    if (!globalThis.confirm(confirmText)) {
       return;
     }
     setDeletingFiltered(true);
     setError(null);
+    setStatus(null);
     try {
-      const params = buildParams(1, currentFilters());
-      params.set("all", "1");
-      const res = await fetch(`${API_BASE_URL}/api/images?${params.toString()}`);
-      const data: PagedResponse<Image> = await res.json();
-      if (!res.ok) {
-        throw new Error((data as unknown as { error?: string }).error || "Failed to fetch images");
-      }
-      const targets = (data.items || []).map((img) => img.path).filter(Boolean);
+      const targets = await fetchTargetPaths(currentFilters());
       if (targets.length === 0) {
         throw new Error("No images matched current filters.");
       }
@@ -174,11 +187,56 @@ export default function TagImagesPage(props: TagImagesProps) {
       if (deleteData.task_id) {
         await waitForTask(deleteData.task_id);
       }
+      setStatus(`Deleted ${targets.length} images.`);
       await fetchImages(1);
     } catch (err) {
       setError(err.message);
     } finally {
       setDeletingFiltered(false);
+    }
+  };
+
+  const handleRetagFiltered = async () => {
+    const confirmText = hasActiveFilters
+      ? "Regenerate tags for all images that match current search filters?"
+      : `Regenerate tags for all images with tag "${tag}"?`;
+    if (!globalThis.confirm(confirmText)) {
+      return;
+    }
+    setRetagging(true);
+    setError(null);
+    setStatus(null);
+    try {
+      const targets = await fetchTargetPaths(currentFilters());
+      if (targets.length === 0) {
+        throw new Error("No images matched current filters.");
+      }
+
+      const taskIds: string[] = [];
+      for (const filepath of targets) {
+        const res = await fetch(`${API_BASE_URL}/api/images/retag`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ filepath }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) {
+          throw new Error(data.message || `Failed to queue retag task: ${filepath}`);
+        }
+        if (data.task_id) {
+          taskIds.push(data.task_id);
+        }
+      }
+
+      for (const taskId of taskIds) {
+        await waitForTask(taskId);
+      }
+      setStatus(`Regenerated tags for ${targets.length} images.`);
+      await fetchImages(currentPage);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setRetagging(false);
     }
   };
 
@@ -193,6 +251,7 @@ export default function TagImagesPage(props: TagImagesProps) {
     }
     setDeletingTag(true);
     setError(null);
+    setStatus(null);
     try {
       const res = await fetch(`${API_BASE_URL}/api/tags`, {
         method: "DELETE",
@@ -221,16 +280,32 @@ export default function TagImagesPage(props: TagImagesProps) {
           <div class="advanced-search-row">
             <button
               type="button"
-              class="btn btn-danger"
-              disabled={deletingFiltered}
-              onClick={handleDeleteFiltered}
+              class="btn btn-primary"
+              disabled={retagging}
+              onClick={handleRetagFiltered}
             >
-              {deletingFiltered ? "Deleting..." : "Delete Filtered Images"}
+              {retagging
+                ? "Regenerating..."
+                : hasActiveFilters
+                ? "Regenerate Filtered Tags"
+                : "Regenerate Tag Images"}
             </button>
             <button
               type="button"
               class="btn btn-danger"
-              disabled={deletingTag}
+              disabled={deletingFiltered || retagging}
+              onClick={handleDeleteFiltered}
+            >
+              {deletingFiltered
+                ? "Deleting..."
+                : hasActiveFilters
+                ? "Delete Filtered Images"
+                : "Delete Tag Images"}
+            </button>
+            <button
+              type="button"
+              class="btn btn-danger"
+              disabled={deletingTag || retagging || deletingFiltered}
               onClick={handleDeleteTag}
             >
               {deletingTag ? "Deleting..." : "Delete This Tag"}
@@ -268,6 +343,7 @@ export default function TagImagesPage(props: TagImagesProps) {
         </form>
         {loading && <p>Loading images...</p>}
         {error && <p class="error-text">Error: {error}</p>}
+        {status && !error && <p class="info-text">{status}</p>}
         {images.length === 0 && !loading && !error && (
           <p class="info-text">No images found for this tag.</p>
         )}
