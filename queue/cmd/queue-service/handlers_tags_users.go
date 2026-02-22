@@ -37,7 +37,7 @@ func (st *appState) handleTagsGet(w http.ResponseWriter, r *http.Request) {
 
 	tags, err := st.store.GetAllTags()
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "Internal Server Error"})
+		internalServerError(w)
 		return
 	}
 	filtered := make([]map[string]any, 0, len(tags))
@@ -114,24 +114,12 @@ func (st *appState) handleTagsGet(w http.ResponseWriter, r *http.Request) {
 	}
 
 	totalItems := len(tags)
-	if allItems {
-		writeJSON(w, http.StatusOK, map[string]any{
-			"items":        tags,
-			"total_items":  totalItems,
-			"per_page":     totalItems,
-			"current_page": 1,
-			"total_pages":  1,
-		})
-		return
+	items := any(tags)
+	if !allItems {
+		start, end := pageBounds(offset, perPage, totalItems)
+		items = tags[start:end]
 	}
-	start, end := pageBounds(offset, perPage, totalItems)
-	writeJSON(w, http.StatusOK, map[string]any{
-		"items":        tags[start:end],
-		"total_items":  totalItems,
-		"per_page":     perPage,
-		"current_page": page,
-		"total_pages":  totalPages(totalItems, perPage),
-	})
+	writePaginatedResponse(w, items, totalItems, perPage, page, allItems, 1)
 }
 
 func (st *appState) handleTagsDelete(w http.ResponseWriter, r *http.Request) {
@@ -148,7 +136,7 @@ func (st *appState) handleTagsDelete(w http.ResponseWriter, r *http.Request) {
 	}
 	deleted, err := st.store.DeleteTag(tag)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "Internal Server Error"})
+		internalServerError(w)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -188,7 +176,7 @@ func (st *appState) handleUsersGet(w http.ResponseWriter, r *http.Request) {
 	users := make([]userInfo, 0)
 	entries, err := os.ReadDir(st.cfg.mediaRoot)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "Internal Server Error"})
+		internalServerError(w)
 		return
 	}
 
@@ -246,24 +234,12 @@ func (st *appState) handleUsersGet(w http.ResponseWriter, r *http.Request) {
 	}
 
 	totalItems := len(users)
-	if allItems {
-		writeJSON(w, http.StatusOK, map[string]any{
-			"items":        users,
-			"total_items":  totalItems,
-			"per_page":     totalItems,
-			"current_page": 1,
-			"total_pages":  1,
-		})
-		return
+	items := any(users)
+	if !allItems {
+		start, end := pageBounds(offset, perPage, totalItems)
+		items = users[start:end]
 	}
-	start, end := pageBounds(offset, perPage, totalItems)
-	writeJSON(w, http.StatusOK, map[string]any{
-		"items":        users[start:end],
-		"total_items":  totalItems,
-		"per_page":     perPage,
-		"current_page": page,
-		"total_pages":  totalPages(totalItems, perPage),
-	})
+	writePaginatedResponse(w, items, totalItems, perPage, page, allItems, 1)
 }
 
 func (st *appState) handleUsersDelete(w http.ResponseWriter, r *http.Request) {
@@ -340,7 +316,7 @@ func (st *appState) handleUserTweetsGet(w http.ResponseWriter, r *http.Request, 
 			writeJSON(w, http.StatusNotFound, map[string]any{"error": "User not found"})
 			return
 		}
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "Internal Server Error"})
+		internalServerError(w)
 		return
 	}
 
@@ -395,7 +371,7 @@ func (st *appState) handleUserTweetsGet(w http.ResponseWriter, r *http.Request, 
 
 		tagsMap, err := st.store.GetTagsForFiles(imagePaths)
 		if err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "Internal Server Error"})
+			internalServerError(w)
 			return
 		}
 
@@ -421,28 +397,10 @@ func (st *appState) handleUserTweetsGet(w http.ResponseWriter, r *http.Request, 
 	}
 
 	totalItems := len(tweets)
-	if returnAll {
-		writeJSON(w, http.StatusOK, map[string]any{
-			"items":        tweets,
-			"total_items":  totalItems,
-			"per_page":     totalItems,
-			"current_page": 1,
-			"total_pages": func() int {
-				if totalItems == 0 {
-					return 0
-				}
-				return 1
-			}(),
-		})
-		return
+	items := any(tweets)
+	if !returnAll {
+		start, end := pageBounds(offset, perPage, totalItems)
+		items = tweets[start:end]
 	}
-
-	start, end := pageBounds(offset, perPage, totalItems)
-	writeJSON(w, http.StatusOK, map[string]any{
-		"items":        tweets[start:end],
-		"total_items":  totalItems,
-		"per_page":     perPage,
-		"current_page": page,
-		"total_pages":  totalPages(totalItems, perPage),
-	})
+	writePaginatedResponse(w, items, totalItems, perPage, page, returnAll, 0)
 }

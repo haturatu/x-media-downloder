@@ -66,6 +66,10 @@ func writeJSON(w http.ResponseWriter, status int, payload interface{}) {
 	_ = json.NewEncoder(w).Encode(payload)
 }
 
+func internalServerError(w http.ResponseWriter) {
+	writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "Internal Server Error"})
+}
+
 func badRequest(w http.ResponseWriter, message string) {
 	writeJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": message})
 }
@@ -112,6 +116,56 @@ func (st *appState) enqueueTask(taskType, queueName, taskID string, payload any,
 		asynq.Timeout(timeout),
 	)
 	return err
+}
+
+func pickFirstNonEmpty(resultMap map[string]any, fallback string, keys ...string) string {
+	for _, key := range keys {
+		if s, ok := stringFromAny(resultMap[key]); ok && s != "" {
+			return s
+		}
+	}
+	return fallback
+}
+
+func addProgressFields(resp map[string]any, resultMap map[string]any) {
+	if v, ok := intFromAny(resultMap["current"]); ok {
+		resp["current"] = v
+	}
+	if v, ok := intFromAny(resultMap["total"]); ok {
+		resp["total"] = v
+	}
+}
+
+func writePaginatedResponse(
+	w http.ResponseWriter,
+	items any,
+	totalItems int,
+	perPage int,
+	currentPage int,
+	returnAll bool,
+	emptyAllTotalPages int,
+) {
+	respPerPage := perPage
+	respCurrentPage := currentPage
+	respTotalPages := totalPages(totalItems, perPage)
+
+	if returnAll {
+		respPerPage = totalItems
+		respCurrentPage = 1
+		if totalItems == 0 {
+			respTotalPages = emptyAllTotalPages
+		} else {
+			respTotalPages = 1
+		}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"items":        items,
+		"total_items":  totalItems,
+		"per_page":     respPerPage,
+		"current_page": respCurrentPage,
+		"total_pages":  respTotalPages,
+	})
 }
 
 func parsePositiveInt(raw string, fallback int) int {

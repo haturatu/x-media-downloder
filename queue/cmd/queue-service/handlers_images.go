@@ -91,7 +91,7 @@ func (st *appState) handleImagesGet(w http.ResponseWriter, r *http.Request) {
 	if len(searchTags) > 0 {
 		paths, err := st.store.FindFilesByTagPatterns(searchTags)
 		if err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "Internal Server Error"})
+			internalServerError(w)
 			return
 		}
 		for _, p := range paths {
@@ -105,7 +105,7 @@ func (st *appState) handleImagesGet(w http.ResponseWriter, r *http.Request) {
 	} else {
 		files, err := listImageFiles(st.cfg.mediaRoot)
 		if err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "Internal Server Error"})
+			internalServerError(w)
 			return
 		}
 		for _, full := range files {
@@ -125,7 +125,7 @@ func (st *appState) handleImagesGet(w http.ResponseWriter, r *http.Request) {
 		}
 		tagsMap, err := st.store.GetTagsForFiles(paths)
 		if err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "Internal Server Error"})
+			internalServerError(w)
 			return
 		}
 		allTagsMap = tagsMap
@@ -170,7 +170,7 @@ func (st *appState) handleImagesGet(w http.ResponseWriter, r *http.Request) {
 		var err error
 		tagsMap, err = st.store.GetTagsForFiles(paths)
 		if err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "Internal Server Error"})
+			internalServerError(w)
 			return
 		}
 	}
@@ -182,25 +182,7 @@ func (st *appState) handleImagesGet(w http.ResponseWriter, r *http.Request) {
 			"tags": tagsMap[img.Path],
 		})
 	}
-	respPerPage := perPage
-	respCurrentPage := page
-	respTotalPages := totalPages(totalItems, perPage)
-	if returnAll {
-		respPerPage = totalItems
-		respCurrentPage = 1
-		if totalItems == 0 {
-			respTotalPages = 0
-		} else {
-			respTotalPages = 1
-		}
-	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"items":        items,
-		"total_items":  totalItems,
-		"per_page":     respPerPage,
-		"current_page": respCurrentPage,
-		"total_pages":  respTotalPages,
-	})
+	writePaginatedResponse(w, items, totalItems, perPage, page, returnAll, 0)
 }
 
 func (st *appState) handleImagesDelete(w http.ResponseWriter, r *http.Request) {

@@ -252,16 +252,11 @@ func (st *appState) handleAutotagStatus(w http.ResponseWriter, r *http.Request) 
 	}
 
 	resultMap, _ := rec.Result.(map[string]any)
-	resp := map[string]any{"state": rec.Status, "status": "Processing..."}
-	if s, ok := stringFromAny(resultMap["status"]); ok {
-		resp["status"] = s
+	resp := map[string]any{
+		"state":  rec.Status,
+		"status": pickFirstNonEmpty(resultMap, "Processing...", "status"),
 	}
-	if v, ok := intFromAny(resultMap["current"]); ok {
-		resp["current"] = v
-	}
-	if v, ok := intFromAny(resultMap["total"]); ok {
-		resp["total"] = v
-	}
+	addProgressFields(resp, resultMap)
 	writeJSON(w, http.StatusOK, resp)
 }
 
@@ -283,19 +278,12 @@ func (st *appState) handleRetagStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resultMap, _ := rec.Result.(map[string]any)
-	resp := map[string]any{"state": rec.Status, "status": "Processing...", "task_id": taskID}
-	if s, ok := stringFromAny(resultMap["status"]); ok {
-		resp["status"] = s
+	resp := map[string]any{
+		"state":   rec.Status,
+		"status":  pickFirstNonEmpty(resultMap, "Processing...", "message", "status"),
+		"task_id": taskID,
 	}
-	if s, ok := stringFromAny(resultMap["message"]); ok && s != "" {
-		resp["status"] = s
-	}
-	if v, ok := intFromAny(resultMap["current"]); ok {
-		resp["current"] = v
-	}
-	if v, ok := intFromAny(resultMap["total"]); ok {
-		resp["total"] = v
-	}
+	addProgressFields(resp, resultMap)
 	writeJSON(w, http.StatusOK, resp)
 }
 
@@ -315,12 +303,7 @@ func (st *appState) handleTaskStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	resultMap, _ := rec.Result.(map[string]any)
-	message := "Running"
-	if s, ok := stringFromAny(resultMap["message"]); ok && s != "" {
-		message = s
-	} else if s, ok := stringFromAny(resultMap["status"]); ok && s != "" {
-		message = s
-	}
+	message := pickFirstNonEmpty(resultMap, "Running", "message", "status")
 	writeJSON(w, http.StatusOK, map[string]any{
 		"task_id": taskID,
 		"state":   rec.Status,
