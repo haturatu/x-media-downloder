@@ -104,7 +104,7 @@ docker compose up -d --no-build autotagger
 - 例: `MEDIA_ROOT=/data/x-media`
 - 未指定時の既定値: `downloaded_images`
 
-Docker利用時は、`MEDIA_ROOT` のパスがコンテナ内で見えるように `volumes` 設定も合わせて変更してください。
+Docker Compose では `MEDIA_ROOT` を bind mount 元として参照するため、`.env` の `MEDIA_ROOT` を変更するだけで保存先を切り替えできます。
 
 また、「Autotagger Reload」機能を使用することで、既存のすべてのメディアに対して一括でタグ付けを行うことができます。
 

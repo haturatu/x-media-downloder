@@ -44,7 +44,7 @@ services:
     command: --mode=api
     restart: always
     volumes:
-      - ./downloaded_images:/app/downloaded_images
+      - ${MEDIA_ROOT:-./downloaded_images}:/app/downloaded_images
       - ./:/data
     depends_on:
       - redis
@@ -79,7 +79,7 @@ services:
     command: --mode=worker
     restart: always
     volumes:
-      - ./downloaded_images:/app/downloaded_images
+      - ${MEDIA_ROOT:-./downloaded_images}:/app/downloaded_images
       - ./:/data
     depends_on:
       - redis
@@ -137,7 +137,7 @@ services:
     restart: always
     volumes:
       - ./x-media-downloder-front:/app
-      - ./downloaded_images:/app/downloaded_images
+      - ${MEDIA_ROOT:-./downloaded_images}:/app/downloaded_images
       - ./:/data
     depends_on:
       - redis
