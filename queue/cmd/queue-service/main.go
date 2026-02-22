@@ -4,14 +4,12 @@ import (
 	"bytes"
 	"context"
 	"crypto/md5"
-	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
-	"log/slog"
 	"math/rand"
 	"mime/multipart"
 	"net/http"
@@ -21,13 +19,11 @@ import (
 	"runtime/debug"
 	"sort"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/hibiken/asynq"
 	"github.com/redis/go-redis/v9"
-	_ "modernc.org/sqlite"
 )
 
 func main() {
