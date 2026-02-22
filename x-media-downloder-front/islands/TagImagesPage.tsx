@@ -233,11 +233,9 @@ export default function TagImagesPage(props: TagImagesProps) {
       if (!retagRes.ok || !retagData.success) {
         throw new Error(retagData.message || "Failed to queue bulk retag");
       }
-      if (retagData.task_id) {
-        await waitForTask(retagData.task_id);
-      }
-      setStatus(`Regenerated tags for ${targets.length} images.`);
-      await fetchImages(currentPage);
+      setStatus(
+        `Queued retag for ${targets.length} images. Track progress in Autotagging Task Status.`,
+      );
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {

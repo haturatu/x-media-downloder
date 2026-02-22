@@ -429,6 +429,15 @@ func (st *appState) handleReconcileDB(w http.ResponseWriter, r *http.Request) {
 }
 
 func (st *appState) enqueueAutotagTask(w http.ResponseWriter, r *http.Request, taskType, message string) {
+	ctx := r.Context()
+	if st.isTrackedTaskBusy(ctx, autotagLastTask) {
+		writeJSON(w, http.StatusConflict, map[string]any{
+			"success": false,
+			"message": "Another autotag task is already running.",
+		})
+		return
+	}
+
 	taskID := uuid.NewString()
 	payload := autotagTaskPayload{TaskID: taskID}
 	b, _ := json.Marshal(payload)
@@ -449,7 +458,6 @@ func (st *appState) enqueueAutotagTask(w http.ResponseWriter, r *http.Request, t
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"success": false, "message": "failed to queue task"})
 		return
 	}
-	ctx := r.Context()
 	st.redis.Set(ctx, autotagLastTask, taskID, 7*24*time.Hour)
 	setTaskState(ctx, st.redis, taskID, "PENDING", map[string]any{"status": "Task is pending..."})
 	logger.Info("autotag task queued", "task_type", taskType, "task_id", taskID)
@@ -1308,6 +1316,15 @@ func (st *appState) handleImagesRetagBulk(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	ctx := r.Context()
+	if st.isTrackedTaskBusy(ctx, retagLastTask) {
+		writeJSON(w, http.StatusConflict, map[string]any{
+			"success": false,
+			"message": "Another bulk retag task is already running.",
+		})
+		return
+	}
+
 	uniq := make(map[string]struct{}, len(body.Filepaths))
 	filepaths := make([]string, 0, len(body.Filepaths))
 	for _, raw := range body.Filepaths {
@@ -1347,7 +1364,6 @@ func (st *appState) handleImagesRetagBulk(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	ctx := r.Context()
 	st.redis.Set(ctx, retagLastTask, taskID, 7*24*time.Hour)
 	setTaskState(ctx, st.redis, taskID, "PENDING", map[string]any{
 		"message": "Bulk retag task queued",
@@ -1361,6 +1377,18 @@ func (st *appState) handleImagesRetagBulk(w http.ResponseWriter, r *http.Request
 		"queued_count": len(filepaths),
 		"message":      "Bulk retag task queued",
 	})
+}
+
+func (st *appState) isTrackedTaskBusy(ctx context.Context, taskKey string) bool {
+	taskID, err := st.redis.Get(ctx, taskKey).Result()
+	if err != nil || strings.TrimSpace(taskID) == "" {
+		return false
+	}
+	rec, ok := getTaskState(ctx, st.redis, taskID)
+	if !ok {
+		return true
+	}
+	return rec.Status == "PENDING" || rec.Status == "PROGRESS"
 }
 
 func (st *appState) processDownloadTask(ctx context.Context, t *asynq.Task) error {
