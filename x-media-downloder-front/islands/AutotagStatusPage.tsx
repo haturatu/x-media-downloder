@@ -12,8 +12,32 @@ interface AutotagStatus {
   total?: number;
 }
 
+function isTerminalState(state?: string): boolean {
+  return state === "SUCCESS" || state === "FAILURE" || state === "NOT_FOUND";
+}
+
+function progressPercentFor(status: AutotagStatus | null): number {
+  if (!status) return 0;
+  if (status.total && status.total > 0 && status.current !== undefined) {
+    return (status.current / status.total) * 100;
+  }
+  if (status.state === "SUCCESS") {
+    return 100;
+  }
+  return 0;
+}
+
+function progressTextFor(status: AutotagStatus | null): string {
+  if (!status) return "N/A";
+  if (status.state === "PROGRESS" || status.state === "SUCCESS") {
+    return `${status.current ?? 0} / ${status.total ?? 0}`;
+  }
+  return "N/A";
+}
+
 export default function AutotagStatusPage() {
   const [status, setStatus] = useState<AutotagStatus | null>(null);
+  const [retagStatus, setRetagStatus] = useState<AutotagStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -22,54 +46,46 @@ export default function AutotagStatusPage() {
   const fetchStatus = async () => {
     if (!IS_BROWSER) return;
     try {
-      // Don't set loading to true on polls
-      // setLoading(true);
       setError(null);
-      const res = await fetch(`${API_BASE_URL}/api/autotag/status`);
-      if (!res.ok) {
-        throw new Error(`HTTP error! status: ${res.status}`);
+      const [autotagRes, retagRes] = await Promise.all([
+        fetch(`${API_BASE_URL}/api/autotag/status`),
+        fetch(`${API_BASE_URL}/api/autotag/retag-status`),
+      ]);
+      if (!autotagRes.ok) {
+        throw new Error(`Autotag status HTTP error: ${autotagRes.status}`);
       }
-      const data: AutotagStatus = await res.json();
-      setStatus(data);
+      if (!retagRes.ok) {
+        throw new Error(`Retag status HTTP error: ${retagRes.status}`);
+      }
+      const [autotagData, retagData] = await Promise.all([
+        autotagRes.json() as Promise<AutotagStatus>,
+        retagRes.json() as Promise<AutotagStatus>,
+      ]);
+      setStatus(autotagData);
+      setRetagStatus(retagData);
     } catch (err) {
       console.error("Error fetching autotag status:", err);
-      setError(err.message);
+      setError(err instanceof Error ? err.message : String(err));
     } finally {
-      setLoading(false); // Only set loading to false on first load
+      setLoading(false);
     }
   };
 
   useEffect(() => {
-    fetchStatus(); // Initial fetch
+    fetchStatus();
 
     const interval = setInterval(() => {
-      if (
-        status &&
-        (status.state === "SUCCESS" || status.state === "FAILURE" ||
-          status.state === "NOT_FOUND")
-      ) {
-        clearInterval(interval); // Stop polling if task is complete or failed
+      const autotagDone = isTerminalState(status?.state);
+      const retagDone = isTerminalState(retagStatus?.state);
+      if (autotagDone && retagDone) {
+        clearInterval(interval);
         return;
       }
       fetchStatus();
-    }, 2000); // Poll every 2 seconds
+    }, 2000);
 
-    return () => clearInterval(interval); // Cleanup on unmount
-  }, [status]); // Re-run effect if status changes to check for completion
-
-  let progressPercent = 0;
-  if (
-    status && status.total && status.total > 0 && status.current !== undefined
-  ) {
-    progressPercent = (status.current / status.total) * 100;
-  } else if (status?.state === "SUCCESS") {
-    progressPercent = 100;
-  }
-
-  const progressText =
-    (status?.state === "PROGRESS" || status?.state === "SUCCESS")
-      ? `${status.current} / ${status.total}`
-      : "N/A";
+    return () => clearInterval(interval);
+  }, [status, retagStatus]);
 
   return (
     <>
@@ -96,9 +112,31 @@ export default function AutotagStatusPage() {
             <div class="progress-track">
               <div
                 class="progress-bar"
-                style={{ width: `${progressPercent}%` }}
+                style={{ width: `${progressPercentFor(status)}%` }}
               >
-                {Math.round(progressPercent)}%
+                {Math.round(progressPercentFor(status))}%
+              </div>
+            </div>
+          </div>
+        )}
+
+        {retagStatus && (
+          <div class="status-card" style={{ marginTop: "16px" }}>
+            <p>
+              <strong>Bulk Retag State:</strong> {retagStatus.state}
+            </p>
+            <p>
+              <strong>Details:</strong> {retagStatus.status}
+            </p>
+            <p>
+              <strong>Progress:</strong> {progressTextFor(retagStatus)}
+            </p>
+            <div class="progress-track">
+              <div
+                class="progress-bar"
+                style={{ width: `${progressPercentFor(retagStatus)}%` }}
+              >
+                {Math.round(progressPercentFor(retagStatus))}%
               </div>
             </div>
           </div>

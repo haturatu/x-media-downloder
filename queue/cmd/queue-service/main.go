@@ -39,10 +39,12 @@ const (
 	taskTypeDeleteImage     = "xmd:delete_image"
 	taskTypeDeleteImages    = "xmd:delete_images"
 	taskTypeRetagImage      = "xmd:retag_image"
+	taskTypeRetagImages     = "xmd:retag_images"
 
 	taskListKey     = "xmd:download_task_ids"
 	taskURLHashKey  = "xmd:download_task_urls"
 	autotagLastTask = "xmd:autotag:last_task_id"
+	retagLastTask   = "xmd:retag:last_task_id"
 	taskMetaPrefix  = "xmd:task-meta-"
 	maxTrackedTasks = 200
 )
@@ -107,6 +109,11 @@ type deleteImagesTaskPayload struct {
 type retagImageTaskPayload struct {
 	TaskID   string `json:"task_id"`
 	Filepath string `json:"filepath"`
+}
+
+type retagImagesTaskPayload struct {
+	TaskID    string   `json:"task_id"`
+	Filepaths []string `json:"filepaths"`
 }
 
 type downloadTaskStatusResponse struct {
@@ -249,12 +256,14 @@ func runAPI(st *appState) {
 	mux.HandleFunc("/api/autotag/untagged", st.handleAutotagUntagged)
 	mux.HandleFunc("/api/autotag/reconcile", st.handleReconcileDB)
 	mux.HandleFunc("/api/autotag/status", st.handleAutotagStatus)
+	mux.HandleFunc("/api/autotag/retag-status", st.handleRetagStatus)
 	mux.HandleFunc("/api/tags", st.handleTags)
 	mux.HandleFunc("/api/users", st.handleUsers)
 	mux.HandleFunc("/api/users/", st.handleUsersSubroutes)
 	mux.HandleFunc("/api/images", st.handleImages)
 	mux.HandleFunc("/api/images/bulk-delete", st.handleImagesBulkDelete)
 	mux.HandleFunc("/api/images/retag", st.handleImagesRetag)
+	mux.HandleFunc("/api/images/retag/bulk", st.handleImagesRetagBulk)
 	mux.HandleFunc("/api/tasks/status", st.handleTaskStatus)
 
 	logger.Info("queue api listening", "addr", st.cfg.apiAddr)
@@ -285,6 +294,7 @@ func runWorker(st *appState) {
 	mux.HandleFunc(taskTypeDeleteImage, st.processDeleteImageTask)
 	mux.HandleFunc(taskTypeDeleteImages, st.processDeleteImagesTask)
 	mux.HandleFunc(taskTypeRetagImage, st.processRetagImageTask)
+	mux.HandleFunc(taskTypeRetagImages, st.processRetagImagesTask)
 
 	logger.Info("queue worker started",
 		"queue", st.cfg.queueName,
@@ -613,6 +623,40 @@ func (st *appState) handleAutotagStatus(w http.ResponseWriter, r *http.Request) 
 	resultMap, _ := rec.Result.(map[string]any)
 	resp := map[string]any{"state": rec.Status, "status": "Processing..."}
 	if s, ok := stringFromAny(resultMap["status"]); ok {
+		resp["status"] = s
+	}
+	if v, ok := intFromAny(resultMap["current"]); ok {
+		resp["current"] = v
+	}
+	if v, ok := intFromAny(resultMap["total"]); ok {
+		resp["total"] = v
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+func (st *appState) handleRetagStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	ctx := r.Context()
+	taskID, err := st.redis.Get(ctx, retagLastTask).Result()
+	if err != nil || taskID == "" {
+		writeJSON(w, http.StatusOK, map[string]any{"state": "NOT_FOUND", "status": "No bulk retag task has been run yet."})
+		return
+	}
+	rec, ok := getTaskState(ctx, st.redis, taskID)
+	if !ok {
+		writeJSON(w, http.StatusOK, map[string]any{"state": "PENDING", "status": "Task is pending..."})
+		return
+	}
+
+	resultMap, _ := rec.Result.(map[string]any)
+	resp := map[string]any{"state": rec.Status, "status": "Processing..."}
+	if s, ok := stringFromAny(resultMap["status"]); ok {
+		resp["status"] = s
+	}
+	if s, ok := stringFromAny(resultMap["message"]); ok && s != "" {
 		resp["status"] = s
 	}
 	if v, ok := intFromAny(resultMap["current"]); ok {
@@ -1398,6 +1442,74 @@ func (st *appState) handleImagesRetag(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (st *appState) handleImagesRetagBulk(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	var body struct {
+		Filepaths []string `json:"filepaths"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || len(body.Filepaths) == 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": "filepaths is required"})
+		return
+	}
+
+	uniq := make(map[string]struct{}, len(body.Filepaths))
+	filepaths := make([]string, 0, len(body.Filepaths))
+	for _, raw := range body.Filepaths {
+		rel := strings.TrimSpace(strings.ReplaceAll(raw, "\\", "/"))
+		if rel == "" {
+			continue
+		}
+		if _, exists := uniq[rel]; exists {
+			continue
+		}
+		uniq[rel] = struct{}{}
+		filepaths = append(filepaths, rel)
+	}
+	if len(filepaths) == 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": "filepaths is required"})
+		return
+	}
+
+	taskID := uuid.NewString()
+	payload := retagImagesTaskPayload{TaskID: taskID, Filepaths: filepaths}
+	b, _ := json.Marshal(payload)
+	task := asynq.NewTask(taskTypeRetagImages, b)
+	_, err := st.asynqCli.Enqueue(task,
+		asynq.Queue(st.cfg.interactiveQueue),
+		asynq.TaskID(taskID),
+		asynq.MaxRetry(0),
+		asynq.Timeout(30*time.Minute),
+	)
+	if err != nil {
+		logger.Error("failed to enqueue bulk retag task",
+			"task_type", taskTypeRetagImages,
+			"task_id", taskID,
+			"count", len(filepaths),
+			"error", err,
+		)
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "failed to queue task"})
+		return
+	}
+
+	ctx := r.Context()
+	st.redis.Set(ctx, retagLastTask, taskID, 7*24*time.Hour)
+	setTaskState(ctx, st.redis, taskID, "PENDING", map[string]any{
+		"message": "Bulk retag task queued",
+		"total":   len(filepaths),
+	})
+	logger.Info("bulk retag task queued", "task_id", taskID, "count", len(filepaths))
+	writeJSON(w, http.StatusAccepted, map[string]any{
+		"success":      true,
+		"queued":       true,
+		"task_id":      taskID,
+		"queued_count": len(filepaths),
+		"message":      "Bulk retag task queued",
+	})
+}
+
 func (st *appState) processDownloadTask(ctx context.Context, t *asynq.Task) error {
 	var payload downloadTaskPayload
 	if err := json.Unmarshal(t.Payload(), &payload); err != nil {
@@ -1843,50 +1955,130 @@ func (st *appState) processRetagImageTask(ctx context.Context, t *asynq.Task) er
 		setTaskState(ctx, st.redis, taskID, "FAILURE", map[string]any{"message": err.Error()})
 		return err
 	}
-
-	existing, err := st.store.GetTagsForFiles([]string{rel})
+	setTaskState(ctx, st.redis, taskID, "PROGRESS", map[string]any{"message": "Retagging image...", "current": 0, "total": 1})
+	result, err := st.retagSingleFile(rel)
 	if err != nil {
 		setTaskState(ctx, st.redis, taskID, "FAILURE", map[string]any{"message": err.Error()})
 		return err
 	}
-	if len(existing[rel]) > 0 {
-		setTaskState(ctx, st.redis, taskID, "SUCCESS", map[string]any{
-			"success": true,
-			"message": "Image already has tags.",
-			"tags":    existing[rel],
-		})
-		return nil
-	}
-
-	full, err := resolvePathUnderRoot(st.cfg.mediaRoot, rel)
-	if err != nil {
-		setTaskState(ctx, st.redis, taskID, "FAILURE", map[string]any{"message": "Invalid filepath"})
-		return err
-	}
-	if _, err := os.Stat(full); err != nil {
-		setTaskState(ctx, st.redis, taskID, "FAILURE", map[string]any{"message": "File not found"})
-		return err
-	}
-
-	setTaskState(ctx, st.redis, taskID, "PROGRESS", map[string]any{"message": "Retagging image..."})
-	hash, err := fileMD5(full)
-	if err != nil {
-		setTaskState(ctx, st.redis, taskID, "FAILURE", map[string]any{"message": "Could not read file"})
-		return err
-	}
-	_ = st.autotagFile(full, rel, hash)
-	_ = st.store.MarkImageProcessed(hash)
 	updated, err := st.store.GetTagsForFiles([]string{rel})
 	if err != nil {
 		setTaskState(ctx, st.redis, taskID, "FAILURE", map[string]any{"message": err.Error()})
 		return err
 	}
+	msg := "Tags generated successfully!"
+	if result == "skipped" {
+		msg = "Image already has tags."
+	}
 	setTaskState(ctx, st.redis, taskID, "SUCCESS", map[string]any{
 		"success": true,
-		"message": "Tags generated successfully!",
+		"message": msg,
 		"tags":    updated[rel],
 	})
 	return nil
+}
+
+func (st *appState) processRetagImagesTask(ctx context.Context, t *asynq.Task) error {
+	var payload retagImagesTaskPayload
+	if err := json.Unmarshal(t.Payload(), &payload); err != nil {
+		return err
+	}
+	taskID := payload.TaskID
+	if taskID == "" {
+		taskID = uuid.NewString()
+	}
+
+	uniq := make(map[string]struct{}, len(payload.Filepaths))
+	filepaths := make([]string, 0, len(payload.Filepaths))
+	for _, raw := range payload.Filepaths {
+		rel := strings.TrimSpace(strings.ReplaceAll(raw, "\\", "/"))
+		if rel == "" {
+			continue
+		}
+		if _, exists := uniq[rel]; exists {
+			continue
+		}
+		uniq[rel] = struct{}{}
+		filepaths = append(filepaths, rel)
+	}
+	if len(filepaths) == 0 {
+		err := errors.New("filepaths is required")
+		setTaskState(ctx, st.redis, taskID, "FAILURE", map[string]any{"message": err.Error()})
+		return err
+	}
+
+	total := len(filepaths)
+	success := 0
+	skipped := 0
+	failed := 0
+	setTaskState(ctx, st.redis, taskID, "PROGRESS", map[string]any{
+		"current": 0,
+		"total":   total,
+		"status":  "Retagging images...",
+	})
+
+	for i, rel := range filepaths {
+		result, err := st.retagSingleFile(rel)
+		if err != nil {
+			failed++
+		} else if result == "skipped" {
+			skipped++
+		} else {
+			success++
+		}
+
+		if i%20 == 0 || i == total-1 {
+			setTaskState(ctx, st.redis, taskID, "PROGRESS", map[string]any{
+				"current": i + 1,
+				"total":   total,
+				"status":  fmt.Sprintf("retagged:%d skipped:%d failed:%d", success, skipped, failed),
+			})
+		}
+	}
+
+	result := map[string]any{
+		"success":         true,
+		"message":         fmt.Sprintf("Bulk retag completed. retagged:%d skipped:%d failed:%d", success, skipped, failed),
+		"retagged_count":  success,
+		"skipped_count":   skipped,
+		"failed_count":    failed,
+		"total":           total,
+		"current":         total,
+		"status":          fmt.Sprintf("retagged:%d skipped:%d failed:%d", success, skipped, failed),
+	}
+	if success == 0 && failed > 0 {
+		setTaskState(ctx, st.redis, taskID, "FAILURE", result)
+		return errors.New("bulk retag failed")
+	}
+	setTaskState(ctx, st.redis, taskID, "SUCCESS", result)
+	return nil
+}
+
+// retagSingleFile returns "success" when tags were generated and "skipped" when existing tags were kept.
+func (st *appState) retagSingleFile(rel string) (string, error) {
+	existing, err := st.store.GetTagsForFiles([]string{rel})
+	if err != nil {
+		return "", err
+	}
+	if len(existing[rel]) > 0 {
+		return "skipped", nil
+	}
+
+	full, err := resolvePathUnderRoot(st.cfg.mediaRoot, rel)
+	if err != nil {
+		return "", errors.New("invalid filepath")
+	}
+	if _, err := os.Stat(full); err != nil {
+		return "", errors.New("file not found")
+	}
+
+	hash, err := fileMD5(full)
+	if err != nil {
+		return "", errors.New("could not read file")
+	}
+	_ = st.autotagFile(full, rel, hash)
+	_ = st.store.MarkImageProcessed(hash)
+	return "success", nil
 }
 
 func (st *appState) downloadImage(imageURL, tweetURL, username string, index int) string {

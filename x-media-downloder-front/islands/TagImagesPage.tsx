@@ -211,25 +211,17 @@ export default function TagImagesPage(props: TagImagesProps) {
       if (targets.length === 0) {
         throw new Error("No images matched current filters.");
       }
-
-      const taskIds: string[] = [];
-      for (const filepath of targets) {
-        const res = await fetch(`${API_BASE_URL}/api/images/retag`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ filepath }),
-        });
-        const data = await res.json();
-        if (!res.ok || !data.success) {
-          throw new Error(data.message || `Failed to queue retag task: ${filepath}`);
-        }
-        if (data.task_id) {
-          taskIds.push(data.task_id);
-        }
+      const retagRes = await fetch(`${API_BASE_URL}/api/images/retag-bulk`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ filepaths: targets }),
+      });
+      const retagData = await retagRes.json();
+      if (!retagRes.ok || !retagData.success) {
+        throw new Error(retagData.message || "Failed to queue bulk retag");
       }
-
-      for (const taskId of taskIds) {
-        await waitForTask(taskId);
+      if (retagData.task_id) {
+        await waitForTask(retagData.task_id);
       }
       setStatus(`Regenerated tags for ${targets.length} images.`);
       await fetchImages(currentPage);

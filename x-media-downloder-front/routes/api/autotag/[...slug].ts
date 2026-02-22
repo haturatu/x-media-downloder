@@ -12,6 +12,8 @@ async function proxy(req: Request, slug: string): Promise<Response> {
     target = `${base}/api/autotag/${slug}`;
   } else if (req.method === "GET" && slug === "status") {
     target = `${base}/api/autotag/status`;
+  } else if (req.method === "GET" && slug === "retag-status") {
+    target = `${base}/api/autotag/retag-status`;
   } else {
     return new Response(null, { status: 404 });
   }
