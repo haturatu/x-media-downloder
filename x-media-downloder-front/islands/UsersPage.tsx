@@ -1,5 +1,5 @@
 import { Head } from "$fresh/runtime.ts";
-import { useState } from "preact/hooks";
+import { useEffect, useState } from "preact/hooks";
 import type { PagedResponse, User } from "../utils/types.ts";
 import Pagination from "../components/Pagination.tsx";
 import { getApiBaseUrl } from "../utils/api.ts";
@@ -43,6 +43,7 @@ export default function UsersPage(props: UsersProps) {
   } = props;
 
   const [users, setUsers] = useState<User[]>(initialUsers || []);
+  const [readlineUsers, setReadlineUsers] = useState<User[]>(initialUsers || []);
   const [currentPage, setCurrentPage] = useState<number>(initialCurrentPage || 1);
   const [totalPages, setTotalPages] = useState<number>(initialTotalPages || 0);
   const [loading, setLoading] = useState<boolean>(false);
@@ -98,6 +99,31 @@ export default function UsersPage(props: UsersProps) {
     return params;
   };
 
+  const buildReadlineParams = (filters: UserFilters): URLSearchParams => {
+    const params = new URLSearchParams();
+    params.set("all", "1");
+    if (filters.q.trim()) params.set("q", filters.q.trim());
+    if (filters.match !== "partial") params.set("match", filters.match);
+    const min = toNonNegativeInt(filters.minTweets);
+    const max = toNonNegativeInt(filters.maxTweets);
+    if (min !== "") params.set("min_tweets", min);
+    if (max !== "") params.set("max_tweets", max);
+    if (filters.sort !== "name_asc") params.set("sort", filters.sort);
+    return params;
+  };
+
+  const fetchUsersForReadline = async (
+    filters: UserFilters = currentFilters(),
+  ): Promise<User[]> => {
+    const params = buildReadlineParams(filters);
+    const res = await fetch(`${API_BASE_URL}/api/users?${params.toString()}`);
+    const data: PagedResponse<User> = await res.json();
+    if (!res.ok) {
+      throw new Error((data as unknown as { error?: string }).error || "Failed to fetch users");
+    }
+    return data.items || [];
+  };
+
   const fetchUsers = async (page: number, filters: UserFilters = currentFilters()) => {
     setLoading(true);
     setError(null);
@@ -111,6 +137,12 @@ export default function UsersPage(props: UsersProps) {
       setUsers(data.items || []);
       setCurrentPage(data.current_page || page);
       setTotalPages(data.total_pages || 0);
+      if (showReadline) {
+        const allUsers = await fetchUsersForReadline(filters);
+        setReadlineUsers(allUsers);
+      } else {
+        setReadlineUsers(data.items || []);
+      }
       globalThis.history.pushState({}, "", `/users?${params.toString()}`);
     } catch (err) {
       setError(err.message);
@@ -173,9 +205,27 @@ export default function UsersPage(props: UsersProps) {
     }
   };
 
-  const readlineText = users
+  const handleReadlineToggle = async (checked: boolean) => {
+    setShowReadline(checked);
+    if (!checked) return;
+    try {
+      const allUsers = await fetchUsersForReadline();
+      setReadlineUsers(allUsers);
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  const readlineText = readlineUsers
     .map((user) => `${user.username}\ttweet_count=${user.tweet_count}`)
     .join("\n");
+
+  useEffect(() => {
+    if (!showReadline) return;
+    fetchUsersForReadline()
+      .then((allUsers) => setReadlineUsers(allUsers))
+      .catch((err) => setError(err.message));
+  }, []);
 
   return (
     <>
@@ -208,7 +258,7 @@ export default function UsersPage(props: UsersProps) {
               <input
                 type="checkbox"
                 checked={showReadline}
-                onInput={(e) => setShowReadline(e.currentTarget.checked)}
+                onInput={(e) => handleReadlineToggle(e.currentTarget.checked)}
               />
               Readline output
             </label>

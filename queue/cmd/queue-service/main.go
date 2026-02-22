@@ -536,6 +536,7 @@ func (st *appState) handleTagsGet(w http.ResponseWriter, r *http.Request) {
 	page := parsePositiveInt(r.URL.Query().Get("page"), 1)
 	perPage := parsePositiveInt(r.URL.Query().Get("per_page"), 100)
 	offset := (page - 1) * perPage
+	allItems := parseBoolParam(r.URL.Query().Get("all"))
 	q := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("q")))
 	match := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("match")))
 	minCount := parseNonNegativeInt(r.URL.Query().Get("min_count"), -1)
@@ -621,6 +622,16 @@ func (st *appState) handleTagsGet(w http.ResponseWriter, r *http.Request) {
 	}
 
 	totalItems := len(tags)
+	if allItems {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"items":        tags,
+			"total_items":  totalItems,
+			"per_page":     totalItems,
+			"current_page": 1,
+			"total_pages":  1,
+		})
+		return
+	}
 	start, end := pageBounds(offset, perPage, totalItems)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"items":        tags[start:end],
@@ -674,6 +685,7 @@ func (st *appState) handleUsersGet(w http.ResponseWriter, r *http.Request) {
 	page := parsePositiveInt(r.URL.Query().Get("page"), 1)
 	perPage := parsePositiveInt(r.URL.Query().Get("per_page"), 100)
 	offset := (page - 1) * perPage
+	allItems := parseBoolParam(r.URL.Query().Get("all"))
 	minTweets := parseNonNegativeInt(r.URL.Query().Get("min_tweets"), -1)
 	maxTweets := parseNonNegativeInt(r.URL.Query().Get("max_tweets"), -1)
 	sortBy := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("sort")))
@@ -747,6 +759,16 @@ func (st *appState) handleUsersGet(w http.ResponseWriter, r *http.Request) {
 	}
 
 	totalItems := len(users)
+	if allItems {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"items":        users,
+			"total_items":  totalItems,
+			"per_page":     totalItems,
+			"current_page": 1,
+			"total_pages":  1,
+		})
+		return
+	}
 	start, end := pageBounds(offset, perPage, totalItems)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"items":        users[start:end],
@@ -1816,6 +1838,15 @@ func parseNonNegativeInt(raw string, fallback int) int {
 		return fallback
 	}
 	return n
+}
+
+func parseBoolParam(raw string) bool {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
 }
 
 func pageBounds(offset, perPage, total int) (int, int) {

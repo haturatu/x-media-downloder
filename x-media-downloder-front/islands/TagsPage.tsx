@@ -1,5 +1,5 @@
 import { Head } from "$fresh/runtime.ts";
-import { useState } from "preact/hooks";
+import { useEffect, useState } from "preact/hooks";
 import type { PagedResponse, Tag } from "../utils/types.ts";
 import Pagination from "../components/Pagination.tsx";
 import { getApiBaseUrl } from "../utils/api.ts";
@@ -43,6 +43,7 @@ export default function TagsPage(props: TagsProps) {
   } = props;
 
   const [tags, setTags] = useState<Tag[]>(initialTags || []);
+  const [readlineTags, setReadlineTags] = useState<Tag[]>(initialTags || []);
   const [currentPage, setCurrentPage] = useState<number>(initialCurrentPage || 1);
   const [totalPages, setTotalPages] = useState<number>(initialTotalPages || 0);
   const [loading, setLoading] = useState<boolean>(false);
@@ -85,6 +86,31 @@ export default function TagsPage(props: TagsProps) {
     return params;
   };
 
+  const buildReadlineParams = (filters: TagFilters): URLSearchParams => {
+    const params = new URLSearchParams();
+    params.set("all", "1");
+    if (filters.q.trim()) params.set("q", filters.q.trim());
+    if (filters.match !== "partial") params.set("match", filters.match);
+    const min = toNonNegativeInt(filters.minCount);
+    const max = toNonNegativeInt(filters.maxCount);
+    if (min !== "") params.set("min_count", min);
+    if (max !== "") params.set("max_count", max);
+    if (filters.sort !== "count_desc") params.set("sort", filters.sort);
+    return params;
+  };
+
+  const fetchTagsForReadline = async (
+    filters: TagFilters = currentFilters(),
+  ): Promise<Tag[]> => {
+    const params = buildReadlineParams(filters);
+    const res = await fetch(`${API_BASE_URL}/api/tags?${params.toString()}`);
+    const data: PagedResponse<Tag> = await res.json();
+    if (!res.ok) {
+      throw new Error((data as unknown as { error?: string }).error || "Failed to fetch tags");
+    }
+    return data.items || [];
+  };
+
   const fetchTags = async (page: number, filters: TagFilters = currentFilters()) => {
     setLoading(true);
     setError(null);
@@ -98,6 +124,12 @@ export default function TagsPage(props: TagsProps) {
       setTags(data.items || []);
       setCurrentPage(data.current_page || page);
       setTotalPages(data.total_pages || 0);
+      if (showReadline) {
+        const allTags = await fetchTagsForReadline(filters);
+        setReadlineTags(allTags);
+      } else {
+        setReadlineTags(data.items || []);
+      }
       globalThis.history.pushState({}, "", `/tags?${params.toString()}`);
     } catch (err) {
       setError(err.message);
@@ -155,9 +187,27 @@ export default function TagsPage(props: TagsProps) {
     }
   };
 
-  const readlineText = tags
+  const handleReadlineToggle = async (checked: boolean) => {
+    setShowReadline(checked);
+    if (!checked) return;
+    try {
+      const allTags = await fetchTagsForReadline();
+      setReadlineTags(allTags);
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  const readlineText = readlineTags
     .map((tag) => `${tag.tag}\tcount=${tag.count || 0}`)
     .join("\n");
+
+  useEffect(() => {
+    if (!showReadline) return;
+    fetchTagsForReadline()
+      .then((allTags) => setReadlineTags(allTags))
+      .catch((err) => setError(err.message));
+  }, []);
 
   return (
     <>
@@ -190,7 +240,7 @@ export default function TagsPage(props: TagsProps) {
               <input
                 type="checkbox"
                 checked={showReadline}
-                onInput={(e) => setShowReadline(e.currentTarget.checked)}
+                onInput={(e) => handleReadlineToggle(e.currentTarget.checked)}
               />
               Readline output
             </label>
