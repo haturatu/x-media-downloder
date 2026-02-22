@@ -1837,7 +1837,7 @@ func (st *appState) processRetagImageTask(ctx context.Context, t *asynq.Task) er
 		return err
 	}
 	setTaskState(ctx, st.redis, taskID, "PROGRESS", map[string]any{"message": "Retagging image...", "current": 0, "total": 1})
-	result, err := st.retagSingleFile(rel)
+	result, err := st.retagSingleFile(rel, false)
 	if err != nil {
 		setTaskState(ctx, st.redis, taskID, "FAILURE", map[string]any{"message": err.Error()})
 		return err
@@ -1899,7 +1899,7 @@ func (st *appState) processRetagImagesTask(ctx context.Context, t *asynq.Task) e
 	})
 
 	for i, rel := range filepaths {
-		result, err := st.retagSingleFile(rel)
+		result, err := st.retagSingleFile(rel, true)
 		if err != nil {
 			failed++
 		} else if result == "skipped" {
@@ -1936,13 +1936,20 @@ func (st *appState) processRetagImagesTask(ctx context.Context, t *asynq.Task) e
 }
 
 // retagSingleFile returns "success" when tags were generated and "skipped" when existing tags were kept.
-func (st *appState) retagSingleFile(rel string) (string, error) {
+// When force is true, existing tags are removed and regenerated.
+func (st *appState) retagSingleFile(rel string, force bool) (string, error) {
 	existing, err := st.store.GetTagsForFiles([]string{rel})
 	if err != nil {
 		return "", err
 	}
-	if len(existing[rel]) > 0 {
+	hasExisting := len(existing[rel]) > 0
+	if hasExisting && !force {
 		return "skipped", nil
+	}
+	if hasExisting && force {
+		if err := st.store.DeleteTagsForFile(rel); err != nil {
+			return "", err
+		}
 	}
 
 	full, err := resolvePathUnderRoot(st.cfg.mediaRoot, rel)
