@@ -57,6 +57,7 @@ func (st *appState) handleDownloadPost(w http.ResponseWriter, r *http.Request) {
 		setTaskState(ctx, st.redis, taskID, "PENDING", map[string]any{"status": "Queued"})
 		st.redis.RPush(ctx, taskListKey, taskID)
 		st.redis.HSet(ctx, taskURLHashKey, taskID, url)
+		st.redis.Set(ctx, autotagLastTask, taskID, 7*24*time.Hour)
 		count++
 		queued = append(queued, map[string]string{"task_id": taskID, "url": url})
 	}
@@ -254,7 +255,7 @@ func (st *appState) handleAutotagStatus(w http.ResponseWriter, r *http.Request) 
 	resultMap, _ := rec.Result.(map[string]any)
 	resp := map[string]any{
 		"state":  rec.Status,
-		"status": pickFirstNonEmpty(resultMap, "Processing...", "status"),
+		"status": pickFirstNonEmpty(resultMap, "Processing...", "status", "message"),
 	}
 	addProgressFields(resp, resultMap)
 	writeJSON(w, http.StatusOK, resp)

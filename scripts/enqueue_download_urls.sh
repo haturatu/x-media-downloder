@@ -11,7 +11,7 @@ Arguments:
   [api_base_url]   省略時: http://localhost:8001
 
 Environment variables:
-  BATCH_SIZE       1リクエストに送るURL数 (default: 100)
+  BATCH_SIZE       1リクエストに送るURL数 (default: 1000)
 USAGE
 }
 
@@ -28,7 +28,7 @@ fi
 URL_FILE="$1"
 API_BASE_URL="${2:-${API_BASE_URL:-http://localhost:8001}}"
 ENDPOINT="${API_BASE_URL%/}/api/download"
-BATCH_SIZE="${BATCH_SIZE:-100}"
+BATCH_SIZE="${BATCH_SIZE:-1000}"
 
 if [[ ! -f "$URL_FILE" ]]; then
   echo "Error: file not found: $URL_FILE" >&2
