@@ -62,6 +62,10 @@ export const handler = (req: Request, _ctx: FreshContext): Response => {
   if (req.method !== "GET") {
     return new Response("Method Not Allowed", { status: 405 });
   }
+  const upgrade = req.headers.get("upgrade") ?? "";
+  if (!upgrade.toLowerCase().includes("websocket")) {
+    return new Response("WebSocket upgrade required", { status: 426 });
+  }
 
   let socket: WebSocket;
   let response: Response;
