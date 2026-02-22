@@ -60,6 +60,26 @@ func getTaskState(ctx context.Context, rdb RedisClient, taskID string) (queueTas
 	return rec, true
 }
 
+func setDownloadAutotagState(ctx context.Context, rdb RedisClient, status string, result map[string]any) {
+	rec := queueTaskStatus{Status: status, Result: result, UpdatedAt: time.Now().UTC().Format(time.RFC3339)}
+	b, _ := json.Marshal(rec)
+	if err := rdb.Set(ctx, autotagDownloadStatusKey, b, 24*time.Hour).Err(); err != nil {
+		logger.Error("failed to persist download autotag state", "status", status, "error", err)
+	}
+}
+
+func getDownloadAutotagState(ctx context.Context, rdb RedisClient) (queueTaskStatus, bool) {
+	raw, err := rdb.Get(ctx, autotagDownloadStatusKey).Result()
+	if err != nil || raw == "" {
+		return queueTaskStatus{}, false
+	}
+	var rec queueTaskStatus
+	if err := json.Unmarshal([]byte(raw), &rec); err != nil {
+		return queueTaskStatus{}, false
+	}
+	return rec, true
+}
+
 func writeJSON(w http.ResponseWriter, status int, payload interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)

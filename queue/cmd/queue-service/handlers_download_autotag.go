@@ -57,7 +57,6 @@ func (st *appState) handleDownloadPost(w http.ResponseWriter, r *http.Request) {
 		setTaskState(ctx, st.redis, taskID, "PENDING", map[string]any{"status": "Queued"})
 		st.redis.RPush(ctx, taskListKey, taskID)
 		st.redis.HSet(ctx, taskURLHashKey, taskID, url)
-		st.redis.Set(ctx, autotagLastTask, taskID, 7*24*time.Hour)
 		count++
 		queued = append(queued, map[string]string{"task_id": taskID, "url": url})
 	}
@@ -224,14 +223,14 @@ func (st *appState) selectAutotagStatusTaskID(ctx context.Context, preferredTask
 		}
 	}
 
+	if bestPending != "" {
+		return bestPending
+	}
 	if bestSuccess != "" {
 		return bestSuccess
 	}
 	if bestFailure != "" {
 		return bestFailure
-	}
-	if bestPending != "" {
-		return bestPending
 	}
 	return preferredTaskID
 }
@@ -308,25 +307,57 @@ func (st *appState) handleAutotagStatus(w http.ResponseWriter, r *http.Request) 
 	}
 	ctx := r.Context()
 	preferredTaskID, _ := st.redis.Get(ctx, autotagLastTask).Result()
-	taskID := st.selectAutotagStatusTaskID(ctx, preferredTaskID)
-	if taskID == "" {
-		writeJSON(w, http.StatusOK, map[string]any{"state": "NOT_FOUND", "status": "No autotagging task has been run yet."})
-		return
-	}
-	rec, ok := getTaskState(ctx, st.redis, taskID)
-	if !ok {
-		writeJSON(w, http.StatusOK, map[string]any{"state": "PENDING", "status": "Task is pending...", "task_id": taskID})
+	manualTaskID := st.selectAutotagStatusTaskID(ctx, preferredTaskID)
+	manualRec, manualOK := getTaskState(ctx, st.redis, manualTaskID)
+	downloadRec, downloadOK := getDownloadAutotagState(ctx, st.redis)
+
+	// Keep explicit manual autotag task behavior (Tag Untagged Images / Reload / Reconcile).
+	if manualOK && (manualRec.Status == "PENDING" || manualRec.Status == "PROGRESS") {
+		resultMap, _ := manualRec.Result.(map[string]any)
+		resp := map[string]any{
+			"state":   manualRec.Status,
+			"status":  pickFirstNonEmpty(resultMap, "Processing...", "status", "message"),
+			"task_id": manualTaskID,
+		}
+		addProgressFields(resp, resultMap)
+		writeJSON(w, http.StatusOK, resp)
 		return
 	}
 
-	resultMap, _ := rec.Result.(map[string]any)
-	resp := map[string]any{
-		"state":   rec.Status,
-		"status":  pickFirstNonEmpty(resultMap, "Processing...", "status", "message"),
-		"task_id": taskID,
+	// Then fall back to download-triggered autotag status.
+	if downloadOK {
+		resultMap, _ := downloadRec.Result.(map[string]any)
+		resp := map[string]any{
+			"state":  downloadRec.Status,
+			"status": pickFirstNonEmpty(resultMap, "Processing...", "status", "message"),
+			"source": "download",
+		}
+		if taskID, ok := stringFromAny(resultMap["task_id"]); ok && taskID != "" {
+			resp["task_id"] = taskID
+		}
+		addProgressFields(resp, resultMap)
+		writeJSON(w, http.StatusOK, resp)
+		return
 	}
-	addProgressFields(resp, resultMap)
-	writeJSON(w, http.StatusOK, resp)
+
+	if manualOK {
+		resultMap, _ := manualRec.Result.(map[string]any)
+		resp := map[string]any{
+			"state":   manualRec.Status,
+			"status":  pickFirstNonEmpty(resultMap, "Processing...", "status", "message"),
+			"task_id": manualTaskID,
+		}
+		addProgressFields(resp, resultMap)
+		writeJSON(w, http.StatusOK, resp)
+		return
+	}
+
+	if strings.TrimSpace(manualTaskID) != "" {
+		writeJSON(w, http.StatusOK, map[string]any{"state": "PENDING", "status": "Task is pending...", "task_id": manualTaskID})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"state": "NOT_FOUND", "status": "No autotagging task has been run yet."})
 }
 
 func (st *appState) handleRetagStatus(w http.ResponseWriter, r *http.Request) {

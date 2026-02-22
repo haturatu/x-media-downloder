@@ -52,6 +52,16 @@ func (st *appState) processDownloadTask(ctx context.Context, t *asynq.Task) erro
 	failed := 0
 	total := len(imageURLs)
 	setTaskState(ctx, st.redis, taskID, "PROGRESS", toMap(progressResult{Current: 0, Total: total, Status: fmt.Sprintf("Starting download for %s...", username)}))
+	if st.cfg.autotaggerEnable && st.cfg.autotaggerURL != "" {
+		setDownloadAutotagState(ctx, st.redis, "PROGRESS", map[string]any{
+			"task_id":  taskID,
+			"current":  0,
+			"total":    total,
+			"status":   fmt.Sprintf("Autotagging downloaded media for %s...", username),
+			"username": username,
+			"url":      url,
+		})
+	}
 
 	for i, imageURL := range imageURLs {
 		res := st.downloadImage(imageURL, url, username, i+1)
@@ -68,6 +78,16 @@ func (st *appState) processDownloadTask(ctx context.Context, t *asynq.Task) erro
 			"total":   total,
 			"status":  fmt.Sprintf("saved:%d skipped:%d failed:%d", success, skipped, failed),
 		})
+		if st.cfg.autotaggerEnable && st.cfg.autotaggerURL != "" {
+			setDownloadAutotagState(ctx, st.redis, "PROGRESS", map[string]any{
+				"task_id":  taskID,
+				"current":  i + 1,
+				"total":    total,
+				"status":   fmt.Sprintf("saved:%d skipped:%d failed:%d", success, skipped, failed),
+				"username": username,
+				"url":      url,
+			})
+		}
 	}
 
 	res := downloadResult{
@@ -78,6 +98,20 @@ func (st *appState) processDownloadTask(ctx context.Context, t *asynq.Task) erro
 		Message:         fmt.Sprintf("completed with saved:%d skipped:%d failed:%d", success, skipped, failed),
 	}
 	setTaskState(ctx, st.redis, taskID, "SUCCESS", toMap(res))
+	if st.cfg.autotaggerEnable && st.cfg.autotaggerURL != "" {
+		finalStatus := "SUCCESS"
+		if success == 0 && failed > 0 {
+			finalStatus = "FAILURE"
+		}
+		setDownloadAutotagState(ctx, st.redis, finalStatus, map[string]any{
+			"task_id":  taskID,
+			"current":  total,
+			"total":    total,
+			"status":   res.Message,
+			"username": username,
+			"url":      url,
+		})
+	}
 	return nil
 }
 
