@@ -503,17 +503,17 @@ func (st *appState) handleRetagStatus(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	taskID, err := st.redis.Get(ctx, retagLastTask).Result()
 	if err != nil || taskID == "" {
-		writeJSON(w, http.StatusOK, map[string]any{"state": "NOT_FOUND", "status": "No bulk retag task has been run yet."})
+		writeJSON(w, http.StatusOK, map[string]any{"state": "NOT_FOUND", "status": "No bulk retag task has been run yet.", "task_id": ""})
 		return
 	}
 	rec, ok := getTaskState(ctx, st.redis, taskID)
 	if !ok {
-		writeJSON(w, http.StatusOK, map[string]any{"state": "PENDING", "status": "Task is pending..."})
+		writeJSON(w, http.StatusOK, map[string]any{"state": "PENDING", "status": "Task is pending...", "task_id": taskID})
 		return
 	}
 
 	resultMap, _ := rec.Result.(map[string]any)
-	resp := map[string]any{"state": rec.Status, "status": "Processing..."}
+	resp := map[string]any{"state": rec.Status, "status": "Processing...", "task_id": taskID}
 	if s, ok := stringFromAny(resultMap["status"]); ok {
 		resp["status"] = s
 	}
@@ -1919,13 +1919,14 @@ func (st *appState) processRetagImagesTask(ctx context.Context, t *asynq.Task) e
 
 	result := map[string]any{
 		"success":        true,
-		"message":        fmt.Sprintf("Bulk retag completed. retagged:%d skipped:%d failed:%d", success, skipped, failed),
+		"message":        fmt.Sprintf("Bulk retag (force) completed. retagged:%d skipped:%d failed:%d", success, skipped, failed),
 		"retagged_count": success,
 		"skipped_count":  skipped,
 		"failed_count":   failed,
 		"total":          total,
 		"current":        total,
-		"status":         fmt.Sprintf("retagged:%d skipped:%d failed:%d", success, skipped, failed),
+		"status":         fmt.Sprintf("force retagged:%d skipped:%d failed:%d", success, skipped, failed),
+		"force":          true,
 	}
 	if success == 0 && failed > 0 {
 		setTaskState(ctx, st.redis, taskID, "FAILURE", result)
