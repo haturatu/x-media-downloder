@@ -22,11 +22,15 @@ export const handler = async (req: Request, ctx: FreshContext): Promise<Response
   const url = new URL(req.url);
   const page = parseInt(url.searchParams.get("page") || "1");
   const per_page = parseInt(url.searchParams.get("per_page") || "100");
+  const params = new URLSearchParams(url.searchParams);
+  params.set("tags", tag);
+  params.set("page", String(page));
+  params.set("per_page", String(per_page));
 
   const API_BASE_URL = getApiBaseUrl();
 
   try {
-    const res = await fetch(`${API_BASE_URL}/api/images?tags=${encodeURIComponent(tag)}&page=${page}&per_page=${per_page}`);
+    const res = await fetch(`${API_BASE_URL}/api/images?${params.toString()}`);
     if (!res.ok) {
       throw new Error(`HTTP error! status: ${res.status}`);
     }

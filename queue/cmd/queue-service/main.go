@@ -838,6 +838,8 @@ func (st *appState) handleUserTweetsGet(w http.ResponseWriter, r *http.Request, 
 	page := parsePositiveInt(r.URL.Query().Get("page"), 1)
 	perPage := parsePositiveInt(r.URL.Query().Get("per_page"), 100)
 	offset := (page - 1) * perPage
+	minTagCount := parseNonNegativeInt(r.URL.Query().Get("min_tag_count"), -1)
+	maxTagCount := parseNonNegativeInt(r.URL.Query().Get("max_tag_count"), -1)
 
 	userPath, err := resolvePathUnderRoot(st.cfg.mediaRoot, username)
 	if err != nil {
@@ -892,7 +894,17 @@ func (st *appState) handleUserTweetsGet(w http.ResponseWriter, r *http.Request, 
 		images := make([]any, 0, len(imagePaths))
 		sort.Strings(imagePaths)
 		for _, p := range imagePaths {
+			tagCount := len(tagsMap[p])
+			if minTagCount >= 0 && tagCount < minTagCount {
+				continue
+			}
+			if maxTagCount >= 0 && tagCount > maxTagCount {
+				continue
+			}
 			images = append(images, map[string]any{"path": p, "tags": tagsMap[p]})
+		}
+		if len(images) == 0 {
+			continue
 		}
 		tweets = append(tweets, tweet{TweetID: tweetID, Images: images})
 	}
@@ -928,6 +940,8 @@ func (st *appState) handleImagesGet(w http.ResponseWriter, r *http.Request) {
 	perPage := parsePositiveInt(r.URL.Query().Get("per_page"), 100)
 	offset := (page - 1) * perPage
 	searchTags := splitCSV(r.URL.Query().Get("tags"))
+	minTagCount := parseNonNegativeInt(r.URL.Query().Get("min_tag_count"), -1)
+	maxTagCount := parseNonNegativeInt(r.URL.Query().Get("max_tag_count"), -1)
 
 	type imageInfo struct {
 		Path  string
@@ -964,6 +978,33 @@ func (st *appState) handleImagesGet(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	allTagsMap := map[string][]imageTag{}
+	if minTagCount >= 0 || maxTagCount >= 0 {
+		paths := make([]string, 0, len(allImages))
+		for _, img := range allImages {
+			paths = append(paths, img.Path)
+		}
+		tagsMap, err := st.store.GetTagsForFiles(paths)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "Internal Server Error"})
+			return
+		}
+		allTagsMap = tagsMap
+
+		filtered := make([]imageInfo, 0, len(allImages))
+		for _, img := range allImages {
+			tagCount := len(tagsMap[img.Path])
+			if minTagCount >= 0 && tagCount < minTagCount {
+				continue
+			}
+			if maxTagCount >= 0 && tagCount > maxTagCount {
+				continue
+			}
+			filtered = append(filtered, img)
+		}
+		allImages = filtered
+	}
+
 	totalItems := len(allImages)
 	switch sortMode {
 	case "random":
@@ -978,10 +1019,14 @@ func (st *appState) handleImagesGet(w http.ResponseWriter, r *http.Request) {
 	for _, img := range pageImages {
 		paths = append(paths, img.Path)
 	}
-	tagsMap, err := st.store.GetTagsForFiles(paths)
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "Internal Server Error"})
-		return
+	tagsMap := allTagsMap
+	if minTagCount < 0 && maxTagCount < 0 {
+		var err error
+		tagsMap, err = st.store.GetTagsForFiles(paths)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "Internal Server Error"})
+			return
+		}
 	}
 
 	items := make([]any, 0, len(pageImages))
