@@ -181,6 +181,12 @@ func main() {
 	defer st.store.Close()
 	defer st.inspector.Close()
 
+	if *mode != "api" {
+		if err := st.migrateLegacyMediaLayout(); err != nil {
+			logger.Warn("legacy media migration finished with errors", "error", err)
+		}
+	}
+
 	switch *mode {
 	case "api":
 		runAPI(st)
@@ -295,6 +301,113 @@ func runWorker(st *appState) {
 		logger.Error("worker stopped", "error", err)
 		os.Exit(1)
 	}
+}
+
+func (st *appState) migrateLegacyMediaLayout() error {
+	entries, err := os.ReadDir(st.cfg.mediaRoot)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return err
+	}
+
+	totalMoved := 0
+	var firstErr error
+	for _, userEntry := range entries {
+		if !userEntry.IsDir() {
+			continue
+		}
+		username := userEntry.Name()
+		userPath := filepath.Join(st.cfg.mediaRoot, username)
+		moved, err := st.migrateLegacyUserLayout(username, userPath)
+		totalMoved += moved
+		if err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	if totalMoved > 0 {
+		logger.Info("legacy media layout migrated", "moved_files", totalMoved)
+	}
+	return firstErr
+}
+
+func (st *appState) migrateLegacyUserLayout(username, userPath string) (int, error) {
+	entries, err := os.ReadDir(userPath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return 0, nil
+		}
+		return 0, err
+	}
+
+	moved := 0
+	var firstErr error
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		legacyDir := filepath.Join(userPath, entry.Name())
+		imgEntries, err := os.ReadDir(legacyDir)
+		if err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		for _, img := range imgEntries {
+			if img.IsDir() || !isImageFile(img.Name()) {
+				continue
+			}
+			src := filepath.Join(legacyDir, img.Name())
+			dst, err := nextAvailablePath(filepath.Join(userPath, img.Name()))
+			if err != nil {
+				if firstErr == nil {
+					firstErr = err
+				}
+				continue
+			}
+			if err := os.Rename(src, dst); err != nil {
+				if firstErr == nil {
+					firstErr = err
+				}
+				continue
+			}
+			oldRel := normalizeRelPath(st.cfg.mediaRoot, src)
+			newRel := normalizeRelPath(st.cfg.mediaRoot, dst)
+			if err := st.store.MoveTagsPath(oldRel, newRel); err != nil && firstErr == nil {
+				firstErr = err
+			}
+			moved++
+		}
+		_ = cleanupEmptyParents(legacyDir, st.cfg.mediaRoot)
+	}
+
+	if moved > 0 {
+		logger.Info("legacy user media migrated", "username", username, "moved_files", moved)
+	}
+	return moved, firstErr
+}
+
+func nextAvailablePath(path string) (string, error) {
+	if _, err := os.Stat(path); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return path, nil
+		}
+		return "", err
+	}
+	ext := filepath.Ext(path)
+	base := strings.TrimSuffix(path, ext)
+	for i := 1; i <= 9999; i++ {
+		candidate := fmt.Sprintf("%s_dup%02d%s", base, i, ext)
+		if _, err := os.Stat(candidate); err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				return candidate, nil
+			}
+			return "", err
+		}
+	}
+	return "", fmt.Errorf("no available filename for %s", path)
 }
 
 type statusRecorder struct {
@@ -850,15 +963,11 @@ func (st *appState) handleUsersGet(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		userPath := filepath.Join(st.cfg.mediaRoot, username)
-		tweetCount := 0
-		tweets, err := os.ReadDir(userPath)
-		if err == nil {
-			for _, tweet := range tweets {
-				if tweet.IsDir() {
-					tweetCount++
-				}
-			}
+		tweetIDs, err := collectUserTweetIDs(userPath)
+		if err != nil {
+			continue
 		}
+		tweetCount := len(tweetIDs)
 		if tweetCount <= 0 {
 			continue
 		}
@@ -998,10 +1107,39 @@ func (st *appState) handleUserTweetsGet(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 
-	tweetIDs := make([]string, 0)
+	imagesByTweet := make(map[string][]string)
 	for _, entry := range entries {
+		entryPath := filepath.Join(userPath, entry.Name())
 		if entry.IsDir() {
-			tweetIDs = append(tweetIDs, entry.Name())
+			tweetID := entry.Name()
+			imgEntries, err := os.ReadDir(entryPath)
+			if err != nil {
+				continue
+			}
+			for _, img := range imgEntries {
+				if img.IsDir() || !isImageFile(img.Name()) {
+					continue
+				}
+				full := filepath.Join(entryPath, img.Name())
+				imagesByTweet[tweetID] = append(imagesByTweet[tweetID], normalizeRelPath(st.cfg.mediaRoot, full))
+			}
+			continue
+		}
+
+		if !isImageFile(entry.Name()) {
+			continue
+		}
+		tweetID := tweetIDFromFilename(entry.Name())
+		if tweetID == "" {
+			continue
+		}
+		imagesByTweet[tweetID] = append(imagesByTweet[tweetID], normalizeRelPath(st.cfg.mediaRoot, entryPath))
+	}
+
+	tweetIDs := make([]string, 0, len(imagesByTweet))
+	for tweetID, paths := range imagesByTweet {
+		if len(paths) > 0 {
+			tweetIDs = append(tweetIDs, tweetID)
 		}
 	}
 	sort.Sort(sort.Reverse(sort.StringSlice(tweetIDs)))
@@ -1010,31 +1148,21 @@ func (st *appState) handleUserTweetsGet(w http.ResponseWriter, r *http.Request, 
 		TweetID string `json:"tweet_id"`
 		Images  []any  `json:"images"`
 	}
-	tweets := make([]tweet, 0)
+	tweets := make([]tweet, 0, len(tweetIDs))
 	for _, tweetID := range tweetIDs {
-		tweetPath := filepath.Join(userPath, tweetID)
-		imgEntries, err := os.ReadDir(tweetPath)
-		if err != nil {
-			continue
-		}
-		imagePaths := make([]string, 0)
-		for _, img := range imgEntries {
-			if img.IsDir() || !isImageFile(img.Name()) {
-				continue
-			}
-			full := filepath.Join(tweetPath, img.Name())
-			imagePaths = append(imagePaths, normalizeRelPath(st.cfg.mediaRoot, full))
-		}
+		imagePaths := imagesByTweet[tweetID]
 		if len(imagePaths) == 0 {
 			continue
 		}
+		sort.Strings(imagePaths)
+
 		tagsMap, err := st.store.GetTagsForFiles(imagePaths)
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "Internal Server Error"})
 			return
 		}
+
 		images := make([]any, 0, len(imagePaths))
-		sort.Strings(imagePaths)
 		for _, p := range imagePaths {
 			tagsForImage := tagsMap[p]
 			if hasTagPattern(tagsForImage, excludeTags) {
@@ -1900,12 +2028,12 @@ func (st *appState) downloadImage(imageURL, tweetURL, username string, index int
 
 	tweetID := tweetIDFromURL(tweetURL)
 	ext := extFromContentType(resp.Header.Get("content-type"))
-	tweetDir := filepath.Join(st.cfg.mediaRoot, username, tweetID)
-	if err := os.MkdirAll(tweetDir, 0o755); err != nil {
+	userDir := filepath.Join(st.cfg.mediaRoot, username)
+	if err := os.MkdirAll(userDir, 0o755); err != nil {
 		return "failed"
 	}
 	filename := fmt.Sprintf("%s_%02d%s", tweetID, index, ext)
-	fullPath := filepath.Join(tweetDir, filename)
+	fullPath := filepath.Join(userDir, filename)
 	if err := os.WriteFile(fullPath, body, 0o644); err != nil {
 		return "failed"
 	}
@@ -2338,6 +2466,32 @@ func (s *store) DeleteTagsForUser(username string) error {
 	})
 }
 
+func (s *store) MoveTagsPath(oldPath, newPath string) error {
+	if oldPath == "" || newPath == "" || oldPath == newPath {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return withSQLiteRetry(func() error {
+		tx, err := s.db.Begin()
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback()
+
+		if _, err := tx.Exec(`
+			INSERT OR IGNORE INTO image_tags(filepath, tag, confidence)
+			SELECT ?, tag, confidence FROM image_tags WHERE filepath = ?
+		`, newPath, oldPath); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(`DELETE FROM image_tags WHERE filepath = ?`, oldPath); err != nil {
+			return err
+		}
+		return tx.Commit()
+	})
+}
+
 func setTaskState(ctx context.Context, rdb *redis.Client, taskID, status string, result interface{}) {
 	rec := queueTaskStatus{Status: status, Result: result, UpdatedAt: time.Now().UTC().Format(time.RFC3339)}
 	b, _ := json.Marshal(rec)
@@ -2545,6 +2699,43 @@ func extractUsername(tweetURL string) string {
 		return m[1]
 	}
 	return "unknown_user"
+}
+
+var tweetIDFilenameRe = regexp.MustCompile(`^(\d+)_\d+`)
+
+func tweetIDFromFilename(name string) string {
+	base := strings.TrimSuffix(name, filepath.Ext(name))
+	m := tweetIDFilenameRe.FindStringSubmatch(base)
+	if len(m) > 1 {
+		return m[1]
+	}
+	return ""
+}
+
+func collectUserTweetIDs(userPath string) (map[string]struct{}, error) {
+	entries, err := os.ReadDir(userPath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return map[string]struct{}{}, nil
+		}
+		return nil, err
+	}
+	tweetIDs := make(map[string]struct{})
+	for _, entry := range entries {
+		if entry.IsDir() {
+			tweetIDs[entry.Name()] = struct{}{}
+			continue
+		}
+		if !isImageFile(entry.Name()) {
+			continue
+		}
+		tweetID := tweetIDFromFilename(entry.Name())
+		if tweetID == "" {
+			continue
+		}
+		tweetIDs[tweetID] = struct{}{}
+	}
+	return tweetIDs, nil
 }
 
 func getTweetImages(tweetURL string) ([]string, error) {
