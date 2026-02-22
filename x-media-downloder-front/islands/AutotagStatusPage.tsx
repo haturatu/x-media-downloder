@@ -107,7 +107,7 @@ export default function AutotagStatusPage() {
             </p>
 
             <p>
-              <strong>Progress:</strong> {progressText}
+              <strong>Progress:</strong> {progressTextFor(status)}
             </p>
             <div class="progress-track">
               <div
