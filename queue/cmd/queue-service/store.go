@@ -31,7 +31,7 @@ func openStore(path string) (*store, error) {
 	db.SetMaxIdleConns(1)
 	db.SetConnMaxLifetime(0)
 	db.SetConnMaxIdleTime(0)
-	if _, err := db.Exec(`PRAGMA journal_mode=DELETE;`); err != nil {
+	if _, err := db.Exec(`PRAGMA journal_mode=WAL;`); err != nil {
 		return nil, fmt.Errorf("set journal mode failed for %s: %w", path, err)
 	}
 	if _, err := db.Exec(`PRAGMA busy_timeout=5000;`); err != nil {
@@ -53,6 +53,15 @@ func openStore(path string) (*store, error) {
 			image_hash TEXT PRIMARY KEY
 		);
 	`); err != nil {
+		return nil, err
+	}
+	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_image_tags_filepath ON image_tags(filepath);`); err != nil {
+		return nil, err
+	}
+	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_image_tags_tag ON image_tags(tag);`); err != nil {
+		return nil, err
+	}
+	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_image_tags_lower_tag ON image_tags(LOWER(tag));`); err != nil {
 		return nil, err
 	}
 	return &store{db: db}, nil
