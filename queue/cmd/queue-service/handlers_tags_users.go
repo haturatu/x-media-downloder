@@ -134,16 +134,50 @@ func (st *appState) handleTagsDelete(w http.ResponseWriter, r *http.Request) {
 		badRequest(w, "tag is required")
 		return
 	}
-	deleted, err := st.store.DeleteTag(tag)
+
+	filepaths, err := st.store.FindFilesByExactTag(tag)
 	if err != nil {
 		internalServerError(w)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"success":       true,
-		"message":       fmt.Sprintf("Deleted tag '%s' from %d entries", tag, deleted),
-		"tag":           tag,
-		"deleted_count": deleted,
+	filepaths = normalizeUniqueFilepaths(filepaths)
+	if len(filepaths) == 0 {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"success":      true,
+			"message":      fmt.Sprintf("No images found for tag '%s'", tag),
+			"tag":          tag,
+			"queued_count": 0,
+		})
+		return
+	}
+
+	taskID := uuid.NewString()
+	payload := deleteImagesTaskPayload{TaskID: taskID, Filepaths: filepaths}
+	err = st.enqueueTask(taskTypeDeleteImages, st.cfg.interactiveQueue, taskID, payload, 30*time.Minute)
+	if err != nil {
+		logger.Error("failed to enqueue delete tag images task",
+			"task_type", taskTypeDeleteImages,
+			"task_id", taskID,
+			"tag", tag,
+			"count", len(filepaths),
+			"error", err,
+		)
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "failed to queue task"})
+		return
+	}
+
+	setTaskState(r.Context(), st.redis, taskID, "PENDING", map[string]any{
+		"message": fmt.Sprintf("Delete images by tag task queued (%d images)", len(filepaths)),
+		"total":   len(filepaths),
+		"tag":     tag,
+	})
+	writeJSON(w, http.StatusAccepted, map[string]any{
+		"success":      true,
+		"queued":       true,
+		"task_id":      taskID,
+		"tag":          tag,
+		"queued_count": len(filepaths),
+		"message":      fmt.Sprintf("Queued delete for %d images with tag '%s'", len(filepaths), tag),
 	})
 }
 

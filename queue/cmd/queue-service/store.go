@@ -347,6 +347,33 @@ func (s *store) FindFilesByTagPatterns(tags []string) ([]string, error) {
 	return items, err
 }
 
+func (s *store) FindFilesByExactTag(tag string) ([]string, error) {
+	tag = strings.TrimSpace(tag)
+	if tag == "" {
+		return []string{}, nil
+	}
+	items := make([]string, 0)
+	err := withSQLiteRetry(func() error {
+		rows, err := s.db.Query(
+			`SELECT DISTINCT filepath FROM image_tags WHERE LOWER(tag) = LOWER(?)`,
+			tag,
+		)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var filepathVal string
+			if err := rows.Scan(&filepathVal); err != nil {
+				return err
+			}
+			items = append(items, filepathVal)
+		}
+		return rows.Err()
+	})
+	return items, err
+}
+
 func (s *store) DeleteTag(tag string) (int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

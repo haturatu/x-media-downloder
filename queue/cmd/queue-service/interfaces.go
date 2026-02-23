@@ -47,6 +47,7 @@ type TagStore interface {
 	GetTagsForFiles(filepaths []string) (map[string][]imageTag, error)
 	GetAllTags() ([]map[string]any, error)
 	FindFilesByTagPatterns(tags []string) ([]string, error)
+	FindFilesByExactTag(tag string) ([]string, error)
 	DeleteTag(tag string) (int, error)
 	DeleteTagsForFile(filepathVal string) error
 	DeleteTagsForUser(username string) error
