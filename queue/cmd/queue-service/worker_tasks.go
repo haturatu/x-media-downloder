@@ -13,7 +13,9 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"sync"
 
 	"github.com/google/uuid"
 	"github.com/hibiken/asynq"
@@ -248,22 +250,62 @@ func (st *appState) processReconcileDBTask(ctx context.Context, t *asynq.Task) e
 	existingHashes := make(map[string]struct{}, len(files))
 	hashReadErrors := 0
 
-	for i, full := range files {
+	for _, full := range files {
 		rel := normalizeRelPath(st.cfg.mediaRoot, full)
 		existingPaths[rel] = struct{}{}
+	}
 
-		hash, err := fileMD5(full)
-		if err != nil {
+	type hashResult struct {
+		hash string
+		err  error
+	}
+
+	workerCount := runtime.NumCPU()
+	if workerCount < 2 {
+		workerCount = 2
+	}
+	if workerCount > 8 {
+		workerCount = 8
+	}
+
+	jobs := make(chan string, workerCount*2)
+	results := make(chan hashResult, workerCount*2)
+
+	var wg sync.WaitGroup
+	wg.Add(workerCount)
+	for i := 0; i < workerCount; i++ {
+		go func() {
+			defer wg.Done()
+			for full := range jobs {
+				hash, err := fileMD5(full)
+				results <- hashResult{hash: hash, err: err}
+			}
+		}()
+	}
+
+	go func() {
+		for _, full := range files {
+			jobs <- full
+		}
+		close(jobs)
+		wg.Wait()
+		close(results)
+	}()
+
+	scanned := 0
+	for result := range results {
+		scanned++
+		if result.err != nil {
 			hashReadErrors++
 		} else {
-			existingHashes[hash] = struct{}{}
+			existingHashes[result.hash] = struct{}{}
 		}
 
-		if i%100 == 0 || i == total-1 {
+		if scanned%100 == 0 || scanned == total {
 			setTaskState(ctx, st.redis, taskID, "PROGRESS", map[string]any{
-				"current": i + 1,
+				"current": scanned,
 				"total":   total,
-				"status":  fmt.Sprintf("Scanned %d/%d files", i+1, total),
+				"status":  fmt.Sprintf("Scanned %d/%d files", scanned, total),
 			})
 		}
 	}
