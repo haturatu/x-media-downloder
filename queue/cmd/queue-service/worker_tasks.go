@@ -14,8 +14,10 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/hibiken/asynq"
@@ -698,41 +700,82 @@ func (st *appState) autotagFile(fullPath, relativePath, _ string) error {
 		return nil
 	}
 
-	f, err := os.Open(fullPath)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
+	const maxAutotagAttempts = 5
 
-	var body bytes.Buffer
-	writer := multipart.NewWriter(&body)
-	part, err := writer.CreateFormFile("file", filepath.Base(fullPath))
-	if err != nil {
-		return err
-	}
-	if _, err := io.Copy(part, f); err != nil {
-		return err
-	}
-	if err := writer.WriteField("format", "json"); err != nil {
-		return err
-	}
-	if err := writer.Close(); err != nil {
-		return err
-	}
+	var respBody []byte
+	var lastErr error
+	for attempt := 1; attempt <= maxAutotagAttempts; attempt++ {
+		f, err := os.Open(fullPath)
+		if err != nil {
+			return err
+		}
 
-	req, _ := http.NewRequest(http.MethodPost, st.cfg.autotaggerURL, &body)
-	req.Header.Set("Content-Type", writer.FormDataContentType())
-	resp, err := st.autotagHTTPClient.Do(req)
-	if err != nil {
-		return err
+		var body bytes.Buffer
+		writer := multipart.NewWriter(&body)
+		part, err := writer.CreateFormFile("file", filepath.Base(fullPath))
+		if err != nil {
+			f.Close()
+			return err
+		}
+		if _, err := io.Copy(part, f); err != nil {
+			f.Close()
+			return err
+		}
+		if err := writer.WriteField("format", "json"); err != nil {
+			f.Close()
+			return err
+		}
+		if err := writer.Close(); err != nil {
+			f.Close()
+			return err
+		}
+		if err := f.Close(); err != nil {
+			return err
+		}
+
+		req, _ := http.NewRequest(http.MethodPost, st.cfg.autotaggerURL, &body)
+		req.Header.Set("Content-Type", writer.FormDataContentType())
+		resp, err := st.autotagHTTPClient.Do(req)
+		if err != nil {
+			lastErr = err
+			return err
+		}
+
+		func() {
+			defer resp.Body.Close()
+			if resp.StatusCode == http.StatusTooManyRequests {
+				lastErr = fmt.Errorf("autotagger response status=%d", resp.StatusCode)
+				if attempt < maxAutotagAttempts {
+					wait := retryAfterDelay(resp.Header.Get("Retry-After"), attempt)
+					logger.Warn("autotagger rate limited, retrying",
+						"filepath", relativePath,
+						"attempt", attempt,
+						"max_attempts", maxAutotagAttempts,
+						"wait", wait.String(),
+					)
+					time.Sleep(wait)
+					return
+				}
+			}
+			if resp.StatusCode >= 400 {
+				lastErr = fmt.Errorf("autotagger response status=%d", resp.StatusCode)
+				return
+			}
+			respBody, lastErr = io.ReadAll(resp.Body)
+		}()
+
+		if lastErr == nil && respBody != nil {
+			break
+		}
+		if resp.StatusCode == http.StatusTooManyRequests && attempt < maxAutotagAttempts {
+			continue
+		}
+		if lastErr != nil {
+			return lastErr
+		}
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode >= 400 {
-		return fmt.Errorf("autotagger response status=%d", resp.StatusCode)
-	}
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return err
+	if lastErr != nil {
+		return lastErr
 	}
 
 	var parsed []struct {
@@ -755,4 +798,21 @@ func (st *appState) autotagFile(fullPath, relativePath, _ string) error {
 		return nil
 	}
 	return st.store.AddTags(relativePath, tags)
+}
+
+func retryAfterDelay(retryAfter string, attempt int) time.Duration {
+	if secs, err := strconv.Atoi(strings.TrimSpace(retryAfter)); err == nil && secs > 0 {
+		return time.Duration(secs) * time.Second
+	}
+	if when, err := http.ParseTime(strings.TrimSpace(retryAfter)); err == nil {
+		if delay := time.Until(when); delay > 0 {
+			return delay
+		}
+	}
+
+	backoff := time.Second << (attempt - 1)
+	if backoff > 30*time.Second {
+		return 30 * time.Second
+	}
+	return backoff
 }
