@@ -118,7 +118,7 @@ services:
     user: "65534:65534"
     volumes:
       - ../autotagger:/autotagger
-      - ${AUTOTAGGER_MODEL_DIR:-/srv/autotagger-models}:/models:ro
+      - ${AUTOTAGGER_MODEL_DIR:-../autotagger/models}:/models:ro
     mem_limit: "2g"
     cpus: "1.0"
     shm_size: "2gb"
@@ -127,7 +127,7 @@ services:
       - autotagger-service
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://localhost:5000/healthz --output /dev/null || exit 1"]
-      interval: 1m30s
+      interval: 30s
       timeout: 10s
       retries: 3
     logging:
