@@ -111,9 +111,11 @@ services:
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+      - MODEL_PATH=/models/model.pth
     user: "65534:65534"
     volumes:
       - ../autotagger:/autotagger
+      - ${AUTOTAGGER_MODEL_DIR:-/srv/autotagger-models}:/models:ro
     mem_limit: "2g"
     cpus: "1.0"
     shm_size: "2gb"
