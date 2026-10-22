@@ -12,5 +12,5 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 FROM alpine:3.20
 WORKDIR /app
 RUN apk add --no-cache ca-certificates tzdata curl
-COPY --from=builder /out/queue-service /usr/local/bin/queue-service
+COPY --link --from=builder /out/queue-service /usr/local/bin/queue-service
 ENTRYPOINT ["/usr/local/bin/queue-service"]
