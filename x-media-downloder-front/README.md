@@ -1,12 +1,12 @@
 # X Media Downloader frontend
 
-Node.js 24 LTS + Express 5 + Vite + Preact のフロントエンドです。
+Node.js 26.12.1 (Current) + Express 5 + Vite + Preact のフロントエンドです。
 既存の画面をサーバーで HTML に描画し、同じデータでブラウザ側を hydrate します。
 Go の Queue API / Worker は引き続き利用します。
 
 ## ローカル開発
 
-Node.js 24 と npm 11 以降を利用してください。nvm の場合は `nvm use` で切り替えられます。
+Node.js 26 と npm 11 以降を利用してください。nvm の場合は `nvm use` で切り替えられます。
 リポジトリのルートで Queue API / Worker と Redis を起動してから実行します。
 
 ```sh
@@ -59,7 +59,7 @@ DEBUG / INFO は stdout、WARN / ERROR は stderr に出力します。
 
 ## 構成の根拠
 
-- [Node.js Release Working Group](https://github.com/nodejs/Release): 本番にサポート中の LTS を使用。
+- [Node.js Release Working Group](https://github.com/nodejs/Release): 最新の Current リリース（26.12.1）を使用し、Docker・CI・ローカル開発のバージョンを統一。
 - [Vite SSR](https://vite.dev/guide/ssr) / [Preact SSR](https://preactjs.com/guide/v10/server-side-rendering/): 既存 Preact UI を再利用し、開発用 middleware と本番ビルドを分離。
 - [npm ci](https://docs.npmjs.com/cli/v11/commands/npm-ci/): ロックファイルから再現可能なインストールを実施。
 - [Docker Node.js guide](https://docs.docker.com/guides/nodejs/): ビルドと本番依存を分離し、非 root ユーザーで実行。

@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1.7
-FROM node:24-bookworm-slim AS dependencies
+FROM node:26.12.1-bookworm-slim AS dependencies
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci
@@ -8,12 +8,12 @@ FROM dependencies AS build
 COPY . .
 RUN npm run build
 
-FROM node:24-bookworm-slim AS production-dependencies
+FROM node:26.12.1-bookworm-slim AS production-dependencies
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev && npm cache clean --force
 
-FROM node:24-bookworm-slim AS runtime
+FROM node:26.12.1-bookworm-slim AS runtime
 WORKDIR /app
 ENV NODE_ENV=production HOST=0.0.0.0 PORT=8000
 COPY --from=production-dependencies --chown=node:node /app/node_modules ./node_modules
