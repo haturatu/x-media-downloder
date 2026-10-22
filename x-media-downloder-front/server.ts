@@ -42,7 +42,7 @@ export async function startServer() {
         res.status(400).send("Invalid path");
         return;
       }
-      res.sendFile(resolvedFile, { maxAge: "1h", dotfiles: "deny" }, (error) => {
+      res.sendFile(path.relative(resolvedRoot, resolvedFile), { root: resolvedRoot, maxAge: "1h", dotfiles: "deny" }, (error) => {
         if (error) next(error);
       });
     } catch (error) {
