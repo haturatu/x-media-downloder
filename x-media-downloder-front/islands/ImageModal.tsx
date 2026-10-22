@@ -1,5 +1,5 @@
 import { useEffect, useState } from "preact/hooks";
-import { IS_BROWSER } from "$fresh/runtime.ts";
+import { IS_BROWSER } from "../utils/runtime.tsx";
 import type { Image } from "../utils/types.ts";
 import { getApiBaseUrl } from "../utils/api.ts";
 
@@ -92,7 +92,7 @@ export default function ImageModal({
       }
     } catch (error) {
       console.error("Retag error:", error);
-      setRetagStatus(`Error: ${error.message}`);
+      setRetagStatus(`Error: ${(error instanceof Error ? error.message : String(error))}`);
     } finally {
       setRetagging(false);
     }
@@ -121,7 +121,7 @@ export default function ImageModal({
       setRetagStatus("Image deleted.");
     } catch (error) {
       console.error("Delete image error:", error);
-      setRetagStatus(`Error: ${error.message}`);
+      setRetagStatus(`Error: ${(error instanceof Error ? error.message : String(error))}`);
     } finally {
       setDeleting(false);
     }

@@ -1,4 +1,4 @@
-import { Head } from "$fresh/runtime.ts";
+import { Head, useQueryParam } from "../utils/runtime.tsx";
 import { useEffect, useState } from "preact/hooks";
 import type { PagedResponse, Tag } from "../utils/types.ts";
 import Pagination from "../components/Pagination.tsx";
@@ -21,12 +21,6 @@ interface TagFilters {
   sort: TagSort;
 }
 
-function browserParam(key: string, fallback: string): string {
-  if (typeof globalThis.location === "undefined") return fallback;
-  const value = new URLSearchParams(globalThis.location.search).get(key);
-  return value ?? fallback;
-}
-
 function toNonNegativeInt(value: string): string {
   const trimmed = value.trim();
   if (trimmed === "") return "";
@@ -36,6 +30,7 @@ function toNonNegativeInt(value: string): string {
 }
 
 export default function TagsPage(props: TagsProps) {
+  const browserParam = useQueryParam();
   const {
     tags: initialTags,
     currentPage: initialCurrentPage,
@@ -132,7 +127,7 @@ export default function TagsPage(props: TagsProps) {
       }
       globalThis.history.pushState({}, "", `/tags?${params.toString()}`);
     } catch (err) {
-      setError(err.message);
+      setError(err instanceof Error ? err.message : String(err));
     } finally {
       setLoading(false);
     }
@@ -181,7 +176,7 @@ export default function TagsPage(props: TagsProps) {
       }
       setTags((prev) => prev.filter((item) => item.tag !== tag));
     } catch (err) {
-      setError(err.message);
+      setError(err instanceof Error ? err.message : String(err));
     } finally {
       setDeletingTag(null);
     }
@@ -194,7 +189,7 @@ export default function TagsPage(props: TagsProps) {
       const allTags = await fetchTagsForReadline();
       setReadlineTags(allTags);
     } catch (err) {
-      setError(err.message);
+      setError(err instanceof Error ? err.message : String(err));
     }
   };
 
@@ -206,7 +201,7 @@ export default function TagsPage(props: TagsProps) {
     if (!showReadline) return;
     fetchTagsForReadline()
       .then((allTags) => setReadlineTags(allTags))
-      .catch((err) => setError(err.message));
+      .catch((err) => setError(err instanceof Error ? err.message : String(err)));
   }, []);
 
   return (

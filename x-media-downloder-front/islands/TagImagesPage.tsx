@@ -1,6 +1,6 @@
 // x-media-downloder-front/islands/TagImagesPage.tsx
 
-import { Head } from "$fresh/runtime.ts";
+import { Head, useQueryParam } from "../utils/runtime.tsx";
 import { useEffect, useState } from "preact/hooks";
 import type { Image, PagedResponse } from "../utils/types.ts";
 import ImageGrid from "../components/ImageGrid.tsx";
@@ -11,7 +11,7 @@ import {
   selectedImage,
   selectedImageIndex,
 } from "../utils/signals.ts";
-import { LiveStatusPayload, subscribeStatus } from "../utils/status_ws.ts";
+import { type LiveStatusPayload, subscribeStatus } from "../utils/status_ws.ts";
 
 interface TagImagesProps {
   tag: string;
@@ -26,12 +26,6 @@ interface TagImageFilters {
   excludeTags: string;
 }
 
-function browserParam(key: string, fallback: string): string {
-  if (typeof globalThis.location === "undefined") return fallback;
-  const value = new URLSearchParams(globalThis.location.search).get(key);
-  return value ?? fallback;
-}
-
 function toNonNegativeInt(value: string): string {
   const trimmed = value.trim();
   if (trimmed === "") return "";
@@ -41,6 +35,7 @@ function toNonNegativeInt(value: string): string {
 }
 
 export default function TagImagesPage(props: TagImagesProps) {
+  const browserParam = useQueryParam();
   const {
     tag,
     images: initialImages,

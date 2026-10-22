@@ -1,10 +1,10 @@
-import { PageProps } from "$fresh/server.ts";
+import type { Handler, PageProps } from "../../utils/http.ts";
 import type { Tweet, PagedResponse } from "../../utils/types.ts";
 import { getApiBaseUrl } from "../../utils/api.ts";
-import UserTweetsPage, { UserTweetsProps } from "../../islands/UserTweetsPage.tsx";
+import UserTweetsPage, { type UserTweetsProps } from "../../islands/UserTweetsPage.tsx";
 
 // The handler remains the same, fetching the initial data on the server.
-export const handler: Fresh.Handler<UserTweetsProps> = async (req, ctx) => {
+export const handler: Handler<UserTweetsProps> = async (req, ctx) => {
   const { username } = ctx.params;
   const url = new URL(req.url);
   const page = parseInt(url.searchParams.get("page") || "1");
@@ -16,7 +16,7 @@ export const handler: Fresh.Handler<UserTweetsProps> = async (req, ctx) => {
   const API_BASE_URL = getApiBaseUrl();
 
   try {
-    const res = await fetch(`${API_BASE_URL}/api/users/${username}/tweets?${params.toString()}`);
+    const res = await fetch(`${API_BASE_URL}/api/users/${encodeURIComponent(username)}/tweets?${params.toString()}`, { signal: AbortSignal.timeout(10_000) });
     if (!res.ok) {
       throw new Error(`HTTP error! status: ${res.status}`);
     }

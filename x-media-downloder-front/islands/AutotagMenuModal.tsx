@@ -1,7 +1,7 @@
 import { useEffect, useState } from "preact/hooks";
-import { IS_BROWSER } from "$fresh/runtime.ts";
+import { IS_BROWSER } from "../utils/runtime.tsx";
 import { getApiBaseUrl } from "../utils/api.ts";
-import { LiveStatusPayload, subscribeStatus } from "../utils/status_ws.ts";
+import { type LiveStatusPayload, subscribeStatus } from "../utils/status_ws.ts";
 
 interface AutotagMenuModalProps {
   isOpen: boolean;
@@ -63,7 +63,7 @@ export default function AutotagMenuModal(
       }
     } catch (error) {
       console.error("Error tagging untagged images:", error);
-      setStatusMessage(`Error: ${error.message}`);
+      setStatusMessage(`Error: ${(error instanceof Error ? error.message : String(error))}`);
     } finally {
       // Don't set loading to false here, as we are navigating away
     }
@@ -94,7 +94,7 @@ export default function AutotagMenuModal(
       }
     } catch (error) {
       console.error("Error force re-tagging images:", error);
-      setStatusMessage(`Error: ${error.message}`);
+      setStatusMessage(`Error: ${(error instanceof Error ? error.message : String(error))}`);
     } finally {
       // Don't set loading to false here
     }
@@ -125,7 +125,7 @@ export default function AutotagMenuModal(
       }
     } catch (error) {
       console.error("Error starting reconciliation task:", error);
-      setStatusMessage(`Error: ${error.message}`);
+      setStatusMessage(`Error: ${(error instanceof Error ? error.message : String(error))}`);
     } finally {
       // Don't set loading to false here
     }

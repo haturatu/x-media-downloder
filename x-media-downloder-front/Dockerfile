@@ -1,24 +1,24 @@
 # syntax=docker/dockerfile:1.7
-FROM denoland/deno:latest AS builder
-
+FROM node:24-bookworm-slim AS dependencies
 WORKDIR /app
-ENV DENO_DIR=/deno-dir
+COPY package.json package-lock.json ./
+RUN npm ci
 
-COPY deno.json .
-COPY fresh.gen.ts .
+FROM dependencies AS build
 COPY . .
+RUN npm run build
 
-# Prime all runtime/dev imports into cache during build.
-RUN deno cache dev.ts main.ts
-RUN deno task build
-
-FROM denoland/deno:latest AS runtime
-
+FROM node:24-bookworm-slim AS production-dependencies
 WORKDIR /app
-ENV DENO_DIR=/deno-dir
-COPY --from=builder /app /app
-COPY --from=builder /deno-dir /deno-dir
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev && npm cache clean --force
 
+FROM node:24-bookworm-slim AS runtime
+WORKDIR /app
+ENV NODE_ENV=production HOST=0.0.0.0 PORT=8000
+COPY --from=production-dependencies --chown=node:node /app/node_modules ./node_modules
+COPY --from=build --chown=node:node /app/dist ./dist
+COPY --chown=node:node package.json package-lock.json ./
+USER node
 EXPOSE 8000
-
-CMD ["deno", "run", "-A", "--unstable", "main.ts"]
+CMD ["node", "dist/server/server.js", "--production"]

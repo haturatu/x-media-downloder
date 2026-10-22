@@ -1,12 +1,12 @@
 // x-media-downloder-front/islands/AutotagStatusPage.tsx
 
-import { Head } from "$fresh/runtime.ts";
+import { Head } from "../utils/runtime.tsx";
 import { useEffect, useState } from "preact/hooks";
-import { IS_BROWSER } from "$fresh/runtime.ts";
+import { IS_BROWSER } from "../utils/runtime.tsx";
 import {
-  LiveStatusPayload,
+  type LiveStatusPayload,
   subscribeStatus,
-  TaskStatus,
+  type TaskStatus,
 } from "../utils/status_ws.ts";
 
 function progressPercentFor(status: TaskStatus | null): number {

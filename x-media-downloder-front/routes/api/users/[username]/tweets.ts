@@ -1,12 +1,12 @@
-import { FreshContext } from "$fresh/server.ts";
+import type { RequestContext } from "../../../../utils/http.ts";
 
 function queueApiBaseUrl(): string {
-  return Deno.env.get("ASYNQ_API_BASE_URL") || "http://queue-api:8001";
+  return process.env.ASYNQ_API_BASE_URL || "http://localhost:8001";
 }
 
 export const handler = async (
   req: Request,
-  ctx: FreshContext<unknown, { username: string }>,
+  ctx: RequestContext,
 ): Promise<Response> => {
   if (req.method !== "GET") {
     return new Response(null, { status: 405 });
@@ -16,6 +16,7 @@ export const handler = async (
     const url = new URL(req.url);
     const target = `${queueApiBaseUrl()}/api/users/${encodeURIComponent(ctx.params.username)}/tweets${url.search}`;
     const upstream = await fetch(target, {
+    signal: AbortSignal.timeout(10_000),
       method: "GET",
       headers: { "Content-Type": "application/json" },
     });

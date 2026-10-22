@@ -1,11 +1,11 @@
-# dotenv environment variable files
+# Local environment
 .env
-.env.development.local
-.env.test.local
-.env.production.local
-.env.local
-
-# Fresh build directory
-_fresh/
-# npm dependencies
+.env.*
+!.env.example
+# Dependencies and build output
 node_modules/
+dist/
+coverage/
+
+# Legacy build output
+_fresh/
