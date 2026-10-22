@@ -24,14 +24,25 @@ X (旧Twitter) からメディアをダウンロードするためのツール�
 
 ## 実行
 
+Node.js 24 LTS と npm 11 以降を用意し、初回はフロントエンドの依存関係をインストールします。
+Redis と Go の準備も必要です。フロントエンドの詳しい設定・検証手順は
+[フロントエンド README](x-media-downloder-front/README.md) を参照してください。
+
+```bash
+cd x-media-downloder-front
+npm ci
+cd ..
+```
+
 アプリケーションを起動するには、以下のコマンドを実行します。
 
 ```bash
 honcho start
 ```
 
-このコマンドは `Procfile` に基づいて、以下の2つのプロセスを同時に起動します。
+このコマンドは `Procfile` に基づいて、以下の3つのプロセスを同時に起動します。
 
+-   **Frontend (Node.js 24 + Express + Vite + Preact)**: 画面・APIプロキシ・画像配信・WebSocketを提供します。
 -   **Queue API (Go + asynq)**: タスク投入とステータス取得を処理します。
 -   **Queue Worker (Go + asynq)**: URLからのメディアダウンロード/Autotagの非同期実行を処理します。
 
