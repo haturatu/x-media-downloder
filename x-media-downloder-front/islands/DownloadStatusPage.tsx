@@ -1,7 +1,7 @@
-import { Head } from "$fresh/runtime.ts";
+import { Head } from "../utils/runtime.tsx";
 import { useEffect, useState } from "preact/hooks";
-import { IS_BROWSER } from "$fresh/runtime.ts";
-import { DownloadStatus, LiveStatusPayload, subscribeStatus } from "../utils/status_ws.ts";
+import { IS_BROWSER } from "../utils/runtime.tsx";
+import { type DownloadStatus, type LiveStatusPayload, subscribeStatus } from "../utils/status_ws.ts";
 
 interface DownloadTaskStatus {
   task_id: string;

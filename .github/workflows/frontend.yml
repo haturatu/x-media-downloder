@@ -1,0 +1,31 @@
+name: Frontend
+
+on:
+  push:
+    paths:
+      - 'x-media-downloder-front/**'
+      - '.github/workflows/frontend.yml'
+  pull_request:
+    paths:
+      - 'x-media-downloder-front/**'
+      - '.github/workflows/frontend.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  node:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: x-media-downloder-front
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: x-media-downloder-front/package-lock.json
+      - run: npm ci
+      - run: npm test
+      - run: docker build -t x-media-frontend .

@@ -1,9 +1,9 @@
-import { FreshContext } from "$fresh/server.ts";
+import type { RequestContext } from "../../utils/http.ts";
 function queueApiBaseUrl(): string {
-  return Deno.env.get("ASYNQ_API_BASE_URL") || "http://queue-api:8001";
+  return process.env.ASYNQ_API_BASE_URL || "http://localhost:8001";
 }
 
-export const handler = async (req: Request, _ctx: FreshContext): Promise<Response> => {
+export const handler = async (req: Request, _ctx: RequestContext): Promise<Response> => {
   if (req.method !== "GET" && req.method !== "DELETE") {
     return new Response(null, { status: 405 });
   }
@@ -11,6 +11,7 @@ export const handler = async (req: Request, _ctx: FreshContext): Promise<Respons
   try {
     const url = new URL(req.url);
     const upstream = await fetch(`${queueApiBaseUrl()}/api/tags${url.search}`, {
+      signal: AbortSignal.timeout(10_000),
       method: req.method,
       headers: { "Content-Type": "application/json" },
       body: req.method === "DELETE" ? await req.text() : undefined,

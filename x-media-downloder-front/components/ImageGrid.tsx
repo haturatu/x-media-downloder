@@ -1,4 +1,4 @@
-import { Image } from "../utils/types.ts";
+import type { Image } from "../utils/types.ts";
 
 interface ImageGridProps {
   images: Image[];

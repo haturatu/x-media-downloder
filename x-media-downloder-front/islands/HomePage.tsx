@@ -1,6 +1,6 @@
 // x-media-downloder-front/islands/HomePage.tsx
 
-import { Head } from "$fresh/runtime.ts";
+import { Head } from "../utils/runtime.tsx";
 import { useEffect, useState } from "preact/hooks";
 import type { Image, PagedResponse } from "../utils/types.ts";
 import ImageGrid from "../components/ImageGrid.tsx";
@@ -55,7 +55,7 @@ export default function HomePage(props: HomePageProps) {
           setImages(data.items || []);
           setTotalPages(data.total_pages || 0);
         })
-        .catch((err) => setError(err.message))
+        .catch((err) => setError(err instanceof Error ? err.message : String(err)))
         .finally(() => setLoading(false));
     }
   }, [currentPage, initialCurrentPage]);

@@ -1,5 +1,3 @@
-import { FreshContext } from "$fresh/server.ts";
-
 interface TaskStatusLike {
   state?: string;
   status?: string;
@@ -20,16 +18,16 @@ interface DownloadStatusLike {
 }
 
 function queueApiBaseUrl(): string {
-  return Deno.env.get("ASYNQ_API_BASE_URL") || "http://queue-api:8001";
+  return process.env.ASYNQ_API_BASE_URL || "http://localhost:8001";
 }
 
 function isBusyState(state?: string): boolean {
   return state === "PENDING" || state === "PROGRESS";
 }
 
-async function fetchJSON<T>(url: string): Promise<T | null> {
+async function fetchJSON<T>(url: string, signal: AbortSignal): Promise<T | null> {
   try {
-    const res = await fetch(url);
+    const res = await fetch(url, { signal: AbortSignal.any([signal, AbortSignal.timeout(10_000)]) });
     if (!res.ok) return null;
     return await res.json() as T;
   } catch {
@@ -37,12 +35,12 @@ async function fetchJSON<T>(url: string): Promise<T | null> {
   }
 }
 
-async function buildPayload() {
+export async function buildPayload(signal: AbortSignal) {
   const base = queueApiBaseUrl();
   const [autotag, retag, download] = await Promise.all([
-    fetchJSON<TaskStatusLike>(`${base}/api/autotag/status`),
-    fetchJSON<TaskStatusLike>(`${base}/api/autotag/retag-status`),
-    fetchJSON<DownloadStatusLike>(`${base}/api/download`),
+    fetchJSON<TaskStatusLike>(`${base}/api/autotag/status`, signal),
+    fetchJSON<TaskStatusLike>(`${base}/api/autotag/retag-status`, signal),
+    fetchJSON<DownloadStatusLike>(`${base}/api/download`, signal),
   ]);
 
   return {
@@ -57,50 +55,3 @@ async function buildPayload() {
     },
   };
 }
-
-export const handler = (req: Request, _ctx: FreshContext): Response => {
-  if (req.method !== "GET") {
-    return new Response("Method Not Allowed", { status: 405 });
-  }
-  const upgrade = req.headers.get("upgrade") ?? "";
-  if (!upgrade.toLowerCase().includes("websocket")) {
-    return new Response("WebSocket upgrade required", { status: 426 });
-  }
-
-  let socket: WebSocket;
-  let response: Response;
-  try {
-    ({ socket, response } = Deno.upgradeWebSocket(req));
-  } catch (_error) {
-    return new Response("WebSocket upgrade required", { status: 426 });
-  }
-
-  let timer: number | null = null;
-
-  const push = async () => {
-    if (socket.readyState !== WebSocket.OPEN) return;
-    const payload = await buildPayload();
-    socket.send(JSON.stringify(payload));
-  };
-
-  socket.onopen = () => {
-    push();
-    timer = setInterval(push, 2000) as unknown as number;
-  };
-
-  socket.onerror = () => {
-    if (timer !== null) {
-      clearInterval(timer);
-      timer = null;
-    }
-  };
-
-  socket.onclose = () => {
-    if (timer !== null) {
-      clearInterval(timer);
-      timer = null;
-    }
-  };
-
-  return response;
-};

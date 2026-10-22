@@ -1,7 +1,7 @@
-import { FreshContext } from "$fresh/server.ts";
+import type { RequestContext } from "../../utils/http.ts";
 
 function queueApiBaseUrl(): string {
-  return Deno.env.get("ASYNQ_API_BASE_URL") || "http://queue-api:8001";
+  return process.env.ASYNQ_API_BASE_URL || "http://localhost:8001";
 }
 
 async function proxyToQueueApi(req: Request): Promise<Response> {
@@ -10,6 +10,7 @@ async function proxyToQueueApi(req: Request): Promise<Response> {
   const target = `${base}/api/download${incoming.search}`;
 
   const response = await fetch(target, {
+    signal: AbortSignal.timeout(10_000),
     method: req.method,
     headers: { "Content-Type": "application/json" },
     body: req.method === "POST" ? await req.text() : undefined,
@@ -23,7 +24,7 @@ async function proxyToQueueApi(req: Request): Promise<Response> {
 
 export const handler = async (
   req: Request,
-  _ctx: FreshContext,
+  _ctx: RequestContext,
 ): Promise<Response> => {
   if (req.method !== "POST" && req.method !== "GET") {
     return new Response(null, { status: 405 });

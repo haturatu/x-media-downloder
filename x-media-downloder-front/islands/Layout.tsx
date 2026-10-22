@@ -1,6 +1,6 @@
-import { ComponentChildren } from "preact";
+import type { ComponentChildren } from "preact";
 import { useState } from "preact/hooks";
-import { IS_BROWSER } from "$fresh/runtime.ts";
+import { IS_BROWSER } from "../utils/runtime.tsx";
 import Sidebar from "../components/Sidebar.tsx";
 import AutotagMenuModal from "../islands/AutotagMenuModal.tsx";
 import ImageModal from "../islands/ImageModal.tsx";
@@ -21,7 +21,6 @@ export default function Layout({ children, route }: LayoutProps) {
   const [isAutotagModalOpen, setIsAutotagModalOpen] = useState(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [globalStatusMessage] = useState<string | null>(null);
-  const [tagSearch, setTagSearch] = useState("");
 
   const handleShowAutotagStatus = () => {
     if (IS_BROWSER) {
@@ -73,7 +72,7 @@ export default function Layout({ children, route }: LayoutProps) {
 
   const handleTagSearch = (e: Event) => {
     e.preventDefault();
-    const query = tagSearch.trim();
+    const query = String(new FormData(e.currentTarget as HTMLFormElement).get("tag") || "").trim();
     if (!query || !IS_BROWSER) return;
     globalThis.location.href = `/tags/${encodeURIComponent(query)}`;
   };
@@ -137,9 +136,9 @@ export default function Layout({ children, route }: LayoutProps) {
             <form class="tag-search-form" onSubmit={handleTagSearch}>
               <input
                 type="search"
-                value={tagSearch}
+                name="tag"
+                aria-label="Search by tag"
                 placeholder="Search by tag"
-                onInput={(e) => setTagSearch(e.currentTarget.value)}
               />
             </form>
             <button

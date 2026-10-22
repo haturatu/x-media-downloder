@@ -1,6 +1,6 @@
 // x-media-downloder-front/routes/tags.tsx
 
-import { PageProps, FreshContext } from "$fresh/server.ts";
+import type { PageProps, RequestContext } from "../utils/http.ts";
 import type { Tag, PagedResponse } from "../utils/types.ts";
 import { getApiBaseUrl } from "../utils/api.ts";
 import TagsPage from "../islands/TagsPage.tsx";
@@ -15,7 +15,7 @@ export default function TagsRoute({ data }: PageProps<TagsProps>) {
   return <TagsPage {...data} />;
 }
 
-export const handler = async (req: Request, ctx: FreshContext): Promise<Response> => {
+export const handler = async (req: Request, ctx: RequestContext): Promise<Response> => {
   const url = new URL(req.url);
   const params = new URLSearchParams(url.searchParams);
   if (!params.get("page")) params.set("page", "1");
@@ -24,7 +24,7 @@ export const handler = async (req: Request, ctx: FreshContext): Promise<Response
   const API_BASE_URL = getApiBaseUrl();
 
   try {
-    const res = await fetch(`${API_BASE_URL}/api/tags?${params.toString()}`);
+    const res = await fetch(`${API_BASE_URL}/api/tags?${params.toString()}`, { signal: AbortSignal.timeout(10_000) });
     if (!res.ok) {
       throw new Error(`HTTP error! status: ${res.status}`);
     }

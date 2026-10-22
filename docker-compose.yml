@@ -138,26 +138,20 @@ services:
 
   frontend:
     build: ./x-media-downloder-front
-    command: deno run -A --unstable main.ts
     restart: always
     volumes:
-      - ./x-media-downloder-front:/app
-      - ${MEDIA_ROOT:-./downloaded_images}:/app/downloaded_images
-      - ./:/data
+      - ${MEDIA_ROOT:-./downloaded_images}:/app/downloaded_images:ro
     depends_on:
       - redis
       - queue-api
       - queue-worker
       - autotagger
     environment:
-      # API is now served from the app itself
-      - API_BASE_URL=http://localhost:8000
+      # SSR calls the Queue API directly; browsers use same-origin /api routes.
+      - NODE_ENV=production
+      - API_BASE_URL=http://queue-api:8001
       - ASYNQ_API_BASE_URL=http://queue-api:8001
-      - TAGS_DB_PATH=/data/tags.db
       - MEDIA_ROOT=/app/downloaded_images
-      # Env vars needed for autotagging features
-      - AUTOTAGGER=true
-      - AUTOTAGGER_URL=http://autotagger:5000/evaluate
     networks:
       - default
       - autotagger-service

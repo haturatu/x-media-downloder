@@ -87,7 +87,7 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
       }
     } catch (error) {
       console.error("Download error:", error);
-      setStatusMessage(`Error: ${error.message}`);
+      setStatusMessage(`Error: ${(error instanceof Error ? error.message : String(error))}`);
     } finally {
       setDownloading(false);
     }

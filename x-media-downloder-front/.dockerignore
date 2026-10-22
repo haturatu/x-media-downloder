@@ -1,5 +1,10 @@
-.git
-_fresh/
-downloaded_images/
-tags.db
+node_modules/
+dist/
+.git/
+.env
+.env.*
 *.log
+coverage/
+
+# Legacy build output
+_fresh/
