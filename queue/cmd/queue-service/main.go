@@ -70,6 +70,11 @@ func newAppState(cfg config) (*appState, error) {
 		return nil, err
 	}
 
+	// Migrate the old unbounded URL hash before accepting new tasks.
+	if err := trackDownloadTask(context.Background(), rdb, "", ""); err != nil {
+		_ = rdb.Close()
+		return nil, err
+	}
 	store, err := openStore(cfg.dbPath)
 	if err != nil {
 		return nil, err

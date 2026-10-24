@@ -55,13 +55,13 @@ func (st *appState) handleDownloadPost(w http.ResponseWriter, r *http.Request) {
 		}
 
 		setTaskState(ctx, st.redis, taskID, "PENDING", map[string]any{"status": "Queued"})
-		st.redis.RPush(ctx, taskListKey, taskID)
-		st.redis.HSet(ctx, taskURLHashKey, taskID, url)
+		if err := trackDownloadTask(ctx, st.redis, taskID, url); err != nil {
+			logger.Error("failed to track queued download", "task_id", taskID, "error", err)
+		}
 		count++
 		queued = append(queued, map[string]string{"task_id": taskID, "url": url})
 	}
 
-	st.redis.LTrim(ctx, taskListKey, -maxTrackedTasks, -1)
 	logger.Info("download tasks queued", "count", count)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"success":      true,
@@ -83,12 +83,15 @@ func (st *appState) handleDownloadGet(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	items := make([]downloadTaskStatusResponse, 0, len(taskIDs))
-	for _, id := range taskIDs {
-		item := st.resolveDownloadStatus(ctx, strings.TrimSpace(id))
-		if item.TaskID != "" {
-			items = append(items, item)
-		}
+	if len(taskIDs) > maxTrackedTasks {
+		badRequest(w, "too many task IDs")
+		return
+	}
+	items, err := st.resolveDownloadStatuses(ctx, taskIDs)
+	if err != nil {
+		logger.Warn("task status lookup failed", "error", err)
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "Task status unavailable"})
+		return
 	}
 
 	queueDepth := 0
@@ -115,17 +118,35 @@ func (st *appState) handleDownloadGet(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (st *appState) resolveDownloadStatus(ctx context.Context, taskID string) downloadTaskStatusResponse {
-	if taskID == "" {
-		return downloadTaskStatusResponse{}
+func (st *appState) resolveDownloadStatuses(ctx context.Context, ids []string) ([]downloadTaskStatusResponse, error) {
+	items := make([]downloadTaskStatusResponse, 0, len(ids))
+	if len(ids) == 0 {
+		return items, nil
 	}
-	urlVal, _ := st.redis.HGet(ctx, taskURLHashKey, taskID).Result()
+	urls, err := st.redis.HMGet(ctx, taskURLHashKey, ids...).Result()
+	if err != nil {
+		return nil, err
+	}
+	states, err := getTaskStates(ctx, st.redis, ids)
+	if err != nil {
+		return nil, err
+	}
+	for i, id := range ids {
+		if id == "" {
+			continue
+		}
+		url, _ := urls[i].(string)
+		rec, ok := states[id]
+		items = append(items, downloadStatusResponse(id, url, rec, ok))
+	}
+	return items, nil
+}
+func downloadStatusResponse(taskID, urlVal string, rec queueTaskStatus, ok bool) downloadTaskStatusResponse {
 	var url *string
 	if urlVal != "" {
 		url = &urlVal
 	}
 
-	rec, ok := getTaskState(ctx, st.redis, taskID)
 	if !ok {
 		return downloadTaskStatusResponse{TaskID: taskID, URL: url, State: "PENDING", Message: "Queued or running"}
 	}
@@ -194,11 +215,16 @@ func (st *appState) selectAutotagStatusTaskID(ctx context.Context, preferredTask
 		return ""
 	}
 
+	states, err := getTaskStates(ctx, st.redis, ordered)
+	if err != nil {
+		logger.Warn("autotag status lookup failed", "error", err)
+		return ""
+	}
 	bestPending := ""
 	bestSuccess := ""
 	bestFailure := ""
 	for _, id := range ordered {
-		rec, ok := getTaskState(ctx, st.redis, id)
+		rec, ok := states[id]
 		if !ok {
 			if id == preferredTaskID && bestPending == "" {
 				bestPending = id
