@@ -19,6 +19,53 @@ import (
 	"github.com/hibiken/asynq"
 )
 
+// Rebuild only the bounded recent set. UNLINK frees a legacy oversized hash
+// asynchronously; no HKEYS/full-hash materialization is needed during migration.
+const trackDownloadTaskScript = `
+if ARGV[1] ~= '' then redis.call('RPUSH', KEYS[1], ARGV[1]) end
+redis.call('LTRIM', KEYS[1], -tonumber(ARGV[3]), -1)
+local ids = redis.call('LRANGE', KEYS[1], 0, -1)
+local urls = {}
+if #ids > 0 then urls = redis.call('HMGET', KEYS[2], unpack(ids)) end
+redis.call('UNLINK', KEYS[2])
+for i, id in ipairs(ids) do
+    if urls[i] then redis.call('HSET', KEYS[2], id, urls[i]) end
+end
+if ARGV[1] ~= '' then redis.call('HSET', KEYS[2], ARGV[1], ARGV[2]) end
+redis.call('EXPIRE', KEYS[1], 604800)
+redis.call('EXPIRE', KEYS[2], 604800)
+return #ids
+`
+
+func trackDownloadTask(ctx context.Context, rdb RedisClient, taskID, url string) error {
+	return rdb.Eval(ctx, trackDownloadTaskScript, []string{taskListKey, taskURLHashKey}, taskID, url, maxTrackedTasks).Err()
+}
+func getTaskStates(ctx context.Context, rdb RedisClient, ids []string) (map[string]queueTaskStatus, error) {
+	states := make(map[string]queueTaskStatus, len(ids))
+	if len(ids) == 0 {
+		return states, nil
+	}
+	keys := make([]string, len(ids))
+	for i, id := range ids {
+		keys[i] = taskMetaPrefix + id
+	}
+	values, err := rdb.MGet(ctx, keys...).Result()
+	if err != nil {
+		return nil, err
+	}
+	for i, value := range values {
+		raw, ok := value.(string)
+		if !ok {
+			continue
+		}
+		var state queueTaskStatus
+		if json.Unmarshal([]byte(raw), &state) == nil {
+			states[ids[i]] = state
+		}
+	}
+	return states, nil
+}
+
 func setTaskState(ctx context.Context, rdb RedisClient, taskID, status string, result interface{}) {
 	rec := queueTaskStatus{Status: status, Result: result, UpdatedAt: time.Now().UTC().Format(time.RFC3339)}
 	b, _ := json.Marshal(rec)

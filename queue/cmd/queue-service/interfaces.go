@@ -11,6 +11,9 @@ import (
 // RedisClient abstracts Redis operations used by API/task state flows.
 type RedisClient interface {
 	Ping(ctx context.Context) *redis.StatusCmd
+	Eval(ctx context.Context, script string, keys []string, args ...interface{}) *redis.Cmd
+	HMGet(ctx context.Context, key string, fields ...string) *redis.SliceCmd
+	MGet(ctx context.Context, keys ...string) *redis.SliceCmd
 	Get(ctx context.Context, key string) *redis.StringCmd
 	Set(ctx context.Context, key string, value interface{}, expiration time.Duration) *redis.StatusCmd
 	LRange(ctx context.Context, key string, start, stop int64) *redis.StringSliceCmd
