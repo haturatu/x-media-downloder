@@ -129,3 +129,7 @@ Docker Compose では `MEDIA_ROOT` を bind mount 元として参照するため
 - `GET /api/download`: asynqタスクの最新ステータス一覧を取得
 - `DELETE /api/users`: ユーザ単位削除（body: `{ "username": "..." }`）
 - `DELETE /api/images`: 画像単位削除（body: `{ "filepath": "user/tweet/file.jpg" }`）
+
+### Task metadata retention
+
+Recent download IDs and URL mappings are updated atomically and limited to 200 tasks; both expire after 7 idle days, matching the task-state lifetime. Startup migrates the old URL hash, retaining only mappings for the recent IDs and asynchronously unlinking legacy excess fields. During a rolling deployment, old API instances can still append without these bounds: restart all API instances and run the new startup migration once more after the last old writer stops. Task listing uses one HMGET and one MGET for status data, and explicit ID lists are limited to 200.
